@@ -33,15 +33,22 @@ ghidra-snes/
   data/languages/65816.sla      # compiled processor (build product)
   data/languages/65816-snes.pspec
   data/languages/65816.cspec
-  lib/*.jar                     # loader JAR (contains SnesRomLoader)
+  lib/ghidra-snes.jar            # exact installed loader artifact
 ```
 
 The upstream **source** tree ships `65816.slaspec`, not the compiled `65816.sla`;
 a usable installed extension requires the build product. REA checks for the
-compiled artifacts and refuses incomplete installations. It does not guess
-missing files and does not accept an arbitrary JAR elsewhere as proof that
-`SnesRomLoader` is functional — a present loader JAR is a prerequisite, not a
-guarantee the loader runs under the selected Ghidra build.
+compiled artifacts and refuses incomplete installations. The pinned installed
+snapshot (`joshleaves/ghidra-snes@d33ce5db`, built for Ghidra 12.0.4) was
+independently inspected: `lib/ghidra-snes.jar` contains
+`ghidra_snes/loader/SnesRomLoader.class`. Admission requires that exact regular
+file path, not an arbitrary `lib/*.jar` or a JAR elsewhere. REA hashes the loader
+bytes with the rest of the installation under the same resource and mutation
+checks; it does not parse the JAR to verify its class contents or execute them.
+The filename requirement is not authentication of those bytes. A loader at a
+different filename or path is refused; repackaging at the required path changes
+its fingerprint but is not independently rejected. A file at the expected path
+is a prerequisite, not a guarantee the loader runs under the selected Ghidra build.
 
 ## Inspection inputs and resource limits
 

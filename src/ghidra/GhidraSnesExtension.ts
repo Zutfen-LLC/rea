@@ -42,7 +42,9 @@ const MAX_PROPERTIES_BYTES = 65536;
 // Verified against the installed joshleaves/ghidra-snes@d33ce5db extension
 // built for Ghidra 12.0.4: the source tree ships 65816.ldefs/.slaspec and
 // 65816-snes.pspec/.cspec, while a usable installation additionally carries
-// the compiled 65816.sla and the SnesRomLoader JAR under lib/.
+// the compiled 65816.sla and lib/ghidra-snes.jar, whose inspected archive
+// contains ghidra_snes/loader/SnesRomLoader.class. Require the installed path;
+// artifact presence and content identity do not establish loader execution.
 const REQUIRED = [
   "Module.manifest",
   "extension.properties",
@@ -50,6 +52,7 @@ const REQUIRED = [
   "data/languages/65816.sla",
   "data/languages/65816-snes.pspec",
   "data/languages/65816.cspec",
+  "lib/ghidra-snes.jar",
 ] as const;
 const UPSTREAM_NAME = "SNES Loader";
 
@@ -109,8 +112,6 @@ export const inspectGhidraSnesExtension = async (
   for (const required of REQUIRED)
     if (!files.includes(required))
       throw new Error(`Missing installed ghidra-snes component: ${required}`);
-  if (!files.some((path) => path.startsWith("lib/") && path.endsWith(".jar")))
-    throw new Error("The installed ghidra-snes extension has no loader JAR.");
   const hash = createHash("sha256");
   let bytesRead = 0;
   let properties = Buffer.alloc(0);
