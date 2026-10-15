@@ -43,62 +43,43 @@ passage or missing guidance and explain the correction or confusion.
 Feature and design proposals can start with a problem and desired outcome.
 Examples, prior art, and measurements help when available; ideas without them
 are welcome. Maintainers can investigate reports and help resolve open questions.
-Human ownership and readiness declarations apply to PRs as described below.
+Pull requests use the fork's independent review and explicit merge-authorization process described below.
 
-## Pull request ownership and readiness
+## Pull request review and merge
 
-AI-assisted contributions are welcome. Every PR must have a human owner who
-takes responsibility for the complete change, including code, tests,
-documentation, and claims produced with AI assistance. The PR author is the
-owner unless another human is named in the PR and explicitly accepts ownership.
-These requirements also apply to maintainer-authored PRs.
+This `Zutfen-LLC/rea` fork uses independent technical review followed by an
+explicit maintainer merge decision. AI-assisted and coding-agent contributions
+may open ordinary PRs directly; drafts are optional for unfinished work or
+early feedback. No separate `Author readiness` declarations, named-human
+attestation form, or `PR readiness` commit-status gate is required.
 
-Before requesting maintainer review, the human owner must:
+Before submitting a PR for review, the author or coding agent must:
 
-- Review the final diff and relevant existing code. Be able to explain the
-  problem, the chosen approach, how it fits REA, and meaningful edge cases.
-- Provide evidence that the change works. Summarize what was checked, the
-  observed results, and meaningful gaps in the PR body. Use focused tests,
-  representative CLI/MCP output, CI artifacts, screenshots, or other checks
-  appropriate to the change. For fixes, show the original failure and why the
-  regression coverage catches it when practical. Documentation-only changes
-  can use source, link, or rendered-document checks. Label source-derived
-  conclusions and proposed checks accurately; never report an unrun check as
-  passing. Follow the [verification requirements](#development-feedback-and-pr-verification)
-  for required checks and real-provider coverage.
-- Complete the **Author readiness** declaration in the PR template, explicitly
-  stating that the PR is ready for initial review.
+- Explain the problem, change, boundaries, and any unresolved scope or
+  authority questions. The [contribution scope](#contribution-scope) and
+  fail-closed integration rule remain unchanged.
+- Report exact base/head identities and meaningful validation evidence:
+  commands actually run, observed results, regressions, failures, skips,
+  baseline comparisons, and unavailable real-provider/platform coverage.
+  Never present unrun checks or unverified compatibility as passing.
+- Keep the PR description and evidence current as corrections land, and avoid
+  unrelated changes, copied protected content, or unreviewed scope expansion.
 
-Keep the PR description concise and current. Explain the problem, observable
-outcome, approach, and useful evidence; link long logs or put them in optional
-details. Address actionable automated review findings and explain disagreements.
-Human ownership and review remain required when CI or an automated reviewer
-reports success. Readiness requests maintainer review; it does not grant scope
-approval or permission to merge.
+An independent reviewer evaluates the final PR head and gives an explicit
+GO/NO-GO decision, with concrete findings where applicable. Coding agents
+correct NO-GO findings on the PR branch and stop for re-review. A GO verdict
+does not itself merge the PR. The maintainer must separately authorize the
+merge; coding agents may not self-merge. Technical CI, applicable security
+checks, evidence requirements, and maintainer authority decisions are not
+waived by removing the upstream attestation form.
 
-Draft PRs may request early feedback with open questions and incomplete checks.
-Leave the readiness declaration unchecked until the human owner has completed
-it. The declaration records initial readiness; later pushes do not invalidate
-it or require another human sign-off. Keep the PR description and affected
-validation current as work changes. AI agents must leave human declarations to
-the human owner and must not attest to a human review on their behalf.
+If code/test CI is unavailable or has baseline-reproduced failures, disclose
+the gap and obtain an explicit maintainer decision before merging. Do not
+substitute a PR-title or metadata check for implementation qualification.
 
-The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. It checks that the
-declaration is filled, not whether the code or evidence is correct. Existing PRs
-can copy the **Author readiness** section from the current template.
-Open PRs must have distinct head commits because GitHub shares commit statuses.
-
-Maintainers enable merge enforcement after the workflow is merged: run
-`gh workflow run pr-readiness.yml -f pull_request_number=NUMBER` for existing
-open PRs, then add `PR readiness` from GitHub Actions to the branch's required
-status checks alongside its existing checks. Deploy the workflow to each
-protected target branch before requiring it there. The workflow reads PR
-metadata using trusted default-branch code and writes only a commit status.
-
-Maintainers may return a PR to the author or close it when the problem is
-unsupported, validation is missing, or the owner cannot explain the change.
-Contributors are responsible for completing this work before requesting review.
+These are fork-specific rules. Contributions proposed to upstream
+[`morluto/rea`](https://github.com/morluto/rea) must instead follow
+upstream's contribution and human author-readiness requirements.
 
 ## Contribution scope
 
