@@ -197,11 +197,32 @@ describe.skipIf(process.platform === "win32")(
       );
     });
 
+    it("rejects an unrelated lib JAR when the actual loader is missing", async () => {
+      const { root } = await snesInstallation();
+      await rm(join(root, "lib/ghidra-snes.jar"));
+      await writeFile(join(root, "lib/unrelated.jar"), "unrelated artifact");
+      await expect(inspectGhidraSnesExtension(root, "12.0.4")).rejects.toThrow(
+        "Missing installed ghidra-snes component: lib/ghidra-snes.jar",
+      );
+    });
+
+    it("admits the actual loader alongside an unrelated lib JAR", async () => {
+      const { root } = await snesInstallation();
+      await writeFile(join(root, "lib/unrelated.jar"), "unrelated artifact");
+      await expect(
+        inspectGhidraSnesExtension(root, "12.0.4"),
+      ).resolves.toMatchObject({
+        id: "ghidra-snes",
+        root,
+        ghidra_version: "12.0.4",
+      });
+    });
+
     it("rejects an installation without a loader JAR", async () => {
       const { root } = await snesInstallation();
       await rm(join(root, "lib/ghidra-snes.jar"));
       await expect(inspectGhidraSnesExtension(root, "12.0.4")).rejects.toThrow(
-        "no loader JAR",
+        "Missing installed ghidra-snes component: lib/ghidra-snes.jar",
       );
     });
 
@@ -210,7 +231,7 @@ describe.skipIf(process.platform === "win32")(
       await rm(join(root, "lib/ghidra-snes.jar"));
       await writeFile(join(root, "ghidra-snes.jar"), "stray jar");
       await expect(inspectGhidraSnesExtension(root, "12.0.4")).rejects.toThrow(
-        "no loader JAR",
+        "Missing installed ghidra-snes component: lib/ghidra-snes.jar",
       );
     });
 
