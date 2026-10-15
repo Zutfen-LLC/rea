@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdir, rename, rm, symlink, truncate, utimes, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  rename,
+  rm,
+  symlink,
+  truncate,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
@@ -26,7 +34,8 @@ const SNES_PROPERTIES =
   "createdOn=2026-05-01\n" +
   "version=12.0.4\n";
 const SNES_CONTENTS: Record<string, string> = {
-  "Module.manifest": "MODULE NAME: Ghidra-SNES\nMODULE DEPENDENCIES:\n    Ghidra\n",
+  "Module.manifest":
+    "MODULE NAME: Ghidra-SNES\nMODULE DEPENDENCIES:\n    Ghidra\n",
   "extension.properties": SNES_PROPERTIES,
   "data/languages/65816.ldefs": "synthetic language definition",
   "data/languages/65816.sla": "synthetic compiled processor",
@@ -37,7 +46,9 @@ const SNES_CONTENTS: Record<string, string> = {
 
 vi.mock("../../../src/filesystem/RegularFile.js", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../../../src/filesystem/RegularFile.js")>();
+    await importOriginal<
+      typeof import("../../../src/filesystem/RegularFile.js")
+    >();
   return { ...actual, openRegularFile: vi.fn(actual.openRegularFile) };
 });
 
@@ -54,7 +65,8 @@ async function snesInstallation(options?: {
   const order = options?.writeOrder ?? Object.keys(contents);
   for (const path of order) {
     const text = contents[path];
-    if (text === undefined) throw new Error(`Unknown fixture component: ${path}`);
+    if (text === undefined)
+      throw new Error(`Unknown fixture component: ${path}`);
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), text);
   }
@@ -69,7 +81,11 @@ function installation(
     status: "available",
     installDir,
     analyzeHeadlessPath: join(installDir, "support", "analyzeHeadless"),
-    applicationPropertiesPath: join(installDir, "Ghidra", "application.properties"),
+    applicationPropertiesPath: join(
+      installDir,
+      "Ghidra",
+      "application.properties",
+    ),
     nativeDecompilerPath: null,
     javaCommand: "java",
     javaHome: "/jdk-21",
@@ -202,9 +218,9 @@ describe.skipIf(process.platform === "win32")(
       const { directory } = await snesInstallation();
       const missing = join(directory, "Ghidra", "Extensions", "ghidra-snes");
       await rm(missing, { recursive: true });
-      await expect(inspectGhidraSnesExtension(missing, "12.0.4")).rejects.toThrow(
-        /No installed ghidra-snes extension at .+ghidra-snes/u,
-      );
+      await expect(
+        inspectGhidraSnesExtension(missing, "12.0.4"),
+      ).rejects.toThrow(/No installed ghidra-snes extension at .+ghidra-snes/u);
     });
   },
 );
@@ -216,9 +232,9 @@ describe.skipIf(process.platform === "win32")(
       const { directory, root } = await snesInstallation();
       const linked = join(directory, "ghidra-snes-link");
       await symlink(root, linked);
-      await expect(inspectGhidraSnesExtension(linked, "12.0.4")).rejects.toThrow(
-        "canonical non-symlink path",
-      );
+      await expect(
+        inspectGhidraSnesExtension(linked, "12.0.4"),
+      ).rejects.toThrow("canonical non-symlink path");
     });
 
     it("rejects a symlinked component instead of hashing an external producer", async () => {
@@ -257,10 +273,7 @@ describe.skipIf(process.platform === "win32")(
     it("rejects components whose cumulative bytes exceed the budget", async () => {
       const { root } = await snesInstallation();
       await truncate(join(root, "data/languages/65816.sla"), 33 * 1024 * 1024);
-      await truncate(
-        join(root, "lib/ghidra-snes.jar"),
-        33 * 1024 * 1024 + 1,
-      );
+      await truncate(join(root, "lib/ghidra-snes.jar"), 33 * 1024 * 1024 + 1);
       await expect(inspectGhidraSnesExtension(root, "12.0.4")).rejects.toThrow(
         "bytes exceed the inspection limit",
       );
@@ -315,12 +328,15 @@ describe.skipIf(process.platform === "win32")(
       ["name=Other Loader\nversion=12.0.4\n", "does not match"],
       ["name=SNES Loader\nversion=12.0.\\uZZZZ\n", "extension properties"],
       ["", "does not match"],
-    ])("rejects invalid or conflicting metadata %j", async (properties, reason) => {
-      const { root } = await snesInstallation({ properties });
-      await expect(inspectGhidraSnesExtension(root, "12.0.4")).rejects.toThrow(
-        reason,
-      );
-    });
+    ])(
+      "rejects invalid or conflicting metadata %j",
+      async (properties, reason) => {
+        const { root } = await snesInstallation({ properties });
+        await expect(
+          inspectGhidraSnesExtension(root, "12.0.4"),
+        ).rejects.toThrow(reason);
+      },
+    );
 
     it("cannot represent a Ghidra 12.0.4 extension as 12.1.x compatible", async () => {
       const { root } = await snesInstallation();

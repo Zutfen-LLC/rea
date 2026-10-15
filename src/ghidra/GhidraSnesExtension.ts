@@ -127,7 +127,10 @@ export const inspectGhidraSnesExtension = async (
         throw new Error(
           "ghidra-snes extension bytes exceed the inspection limit.",
         );
-      if (relative === "extension.properties" && before.size > MAX_PROPERTIES_BYTES)
+      if (
+        relative === "extension.properties" &&
+        before.size > MAX_PROPERTIES_BYTES
+      )
         throw new Error(
           "ghidra-snes extension properties exceed the inspection limit.",
         );
