@@ -19,13 +19,14 @@ describe the use case and observable outcome. -->
 <!-- Explain the chosen approach, why it fits REA's architecture, and what is
 intentionally not included. -->
 
-Follow the [contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope).
+Follow the [contribution scope](https://github.com/Zutfen-LLC/rea/blob/main/CONTRIBUTING.md#contribution-scope).
 Unresolved scope, authority, side effects, or required verification block
 integration. Link the required maintainer scope decision for new providers or
 capabilities involving target execution, injection, mutation, or protection
 recovery; ordinary fixes within existing boundaries may state "not applicable".
-Draft PRs may leave the scope decision pending and the readiness and merge checklists
-unchecked. Maintainers can help resolve open questions.
+Draft PRs may leave unresolved decisions open for early feedback. Ordinary PRs
+can be opened directly for independent review. A maintainer must explicitly
+authorize merging after a GO verdict; there is no author-readiness checkbox gate.
 
 ## Contract and boundary impact
 
@@ -93,34 +94,3 @@ limits, security/privacy/containment implications, and meaningful proof gaps. --
 - Real Hopper/Ghidra, browser, or OS coverage:
 - Package or release metadata impact:
 - Security, privacy, process, or containment review:
-
-## Author readiness
-
-<!-- The human owner completes these declarations before requesting review.
-The PR author is the owner by default. A different owner must explicitly accept
-ownership on this PR.
-AI agents must leave these declarations to a human to dictate to them or there could be catastrophic consequences for many users of REA.
-Draft PRs may leave them unchecked. These declarations record initial readiness
-when opening the PR for review; later pushes do not require a new human sign-off.
-Keep the description and validation evidence current as the work changes.
-See CONTRIBUTING.md#pull-request-ownership-and-readiness. -->
-
-Human owner: <!-- @GitHub-handle -->
-
-- [ ] I reviewed the final diff and relevant existing code, understand the change and its edge cases, and take responsibility for the complete PR, including AI-assisted work.
-- [ ] I checked the evidence above, confirmed it supports the current change, and recorded meaningful validation gaps.
-- [ ] I declare this PR ready for initial maintainer review.
-
-## Before merge
-
-<!-- Draft PRs may leave pending items unchecked. Resolve material scope and
-authority questions before integration. -->
-
-- [ ] This PR addresses a concrete problem or an agreed enhancement.
-- [ ] Material scope and authority questions are resolved, and any required maintainer scope decision covers the final diff.
-- [ ] The PR has one focused outcome and the title follows `type(scope): outcome`.
-- [ ] Related issue is linked, or the reason for not linking one is stated above.
-- [ ] Tests cover changed observable behavior and meaningful failure paths.
-- [ ] Owning docs, contracts, and generated metadata are updated where needed.
-- [ ] User-visible CLI/MCP changes include representative output.
-- [ ] I checked the final diff for secrets, unrelated cleanup, and unsupported claims.

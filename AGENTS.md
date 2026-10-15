@@ -89,25 +89,24 @@ Incomplete reports, source-only findings, and early feature or design ideas are
 welcome when their limitations are explicit; a completed diagnosis or fix is not
 required to open an issue.
 
-## Pull Request Readiness
+## Pull Request Review and Merge
 
-Follow [human ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness)
-when preparing a PR. AI-assisted contributions are welcome; a human must review
-and own the final diff, check the validation evidence and its limitations, and
-explicitly declare the PR ready for initial maintainer review.
+Follow the [fork's pull request review and merge process](CONTRIBUTING.md#pull-request-review-and-merge).
+Coding agents may open ordinary, non-draft PRs when an implementation is ready
+for independent review; drafts are optional for incomplete work or early feedback.
+No separate author-attestation checkbox or PR-readiness status is required.
 
-Keep the PR body concise and current, with the concrete problem, observable
-outcome, approach, and evidence. Report only checks that actually ran as executed;
-distinguish source-derived conclusions, proposed checks, and unavailable coverage.
-Address actionable automated review findings and explain disagreements.
+Keep the PR body current with the concrete problem, exact head, scope, evidence,
+executed checks, failures, skips, and validation limitations. Distinguish
+observations from inferences and claims not yet verified. Preserve the
+contribution-scope and authority boundaries; do not treat CI success as review
+or permission to merge.
 
-Leave the template's **Author readiness** declarations unchecked for the human
-owner to complete. Never attest to human review on their behalf. Keep the PR in
-draft until the human declares the PR initially ready. Later pushes do not
-invalidate that declaration or require another human sign-off. Keep the PR body
-and affected validation current as work changes. The readiness check validates
-the filled declaration; CI and automated review results do not establish that
-human review occurred, maintainer scope approval, or merge permission.
+Stop at the maintainer review gate. On NO-GO, correct findings and request
+re-review; on GO, wait for explicit maintainer merge authorization. Agents must
+never self-merge or claim an independent/human review they did not receive.
+For contributions submitted to upstream `morluto/rea`, follow upstream's
+separate author-readiness requirements.
 
 <!-- BEGIN:turborepo-agent-rules -->
 
