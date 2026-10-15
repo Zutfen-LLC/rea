@@ -47,14 +47,18 @@ async function snesInstallation(options?: {
 }) {
   const directory = await createTestTempDirectory("rea-snes-extension-");
   const root = join(directory, "Ghidra", "Extensions", "ghidra-snes");
-  const contents = options?.properties
-    ? { ...SNES_CONTENTS, "extension.properties": options.properties }
-    : SNES_CONTENTS;
-  for (const path of options?.writeOrder ?? Object.keys(contents)) {
+  const contents =
+    options?.properties !== undefined
+      ? { ...SNES_CONTENTS, "extension.properties": options.properties }
+      : SNES_CONTENTS;
+  const order = options?.writeOrder ?? Object.keys(contents);
+  for (const path of order) {
+    const text = contents[path];
+    if (text === undefined) throw new Error(`Unknown fixture component: ${path}`);
     await mkdir(dirname(join(root, path)), { recursive: true });
-    await writeFile(join(root, path), contents[path]);
+    await writeFile(join(root, path), text);
   }
-  return { directory, root, ghidraHome: join(root, "..", "..") === "" ? directory : dirname(dirname(root)) };
+  return { directory, root };
 }
 
 function installation(
@@ -373,7 +377,7 @@ describe.skipIf(process.platform === "win32")(
       const { root } = await snesInstallation();
       const mocked = vi.mocked(openRegularFile);
       const original = mocked.getMockImplementation();
-      expect(original).toBeDefined();
+      if (!original) throw new Error("openRegularFile mock not initialized");
       const controller = new AbortController();
       mocked.mockImplementation(async (path, options) => {
         const handle = await original(path, options);
@@ -393,7 +397,7 @@ describe.skipIf(process.platform === "win32")(
       const { root } = await snesInstallation();
       const mocked = vi.mocked(openRegularFile);
       const original = mocked.getMockImplementation();
-      expect(original).toBeDefined();
+      if (!original) throw new Error("openRegularFile mock not initialized");
       mocked.mockImplementation(async (path, options) => {
         const handle = await original(path, options);
         await rename(path, `${path}.replaced`);
