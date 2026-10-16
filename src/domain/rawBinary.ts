@@ -134,7 +134,12 @@ export const admitRawBinary = (input: {
   });
 };
 
-/** Describe the format/architecture/entry pairing without performing I/O. */
+/**
+ * Describe the format/architecture/entry pairing without performing I/O.
+ * Architecture and entry flags pair with raw-binary only; dos-com and
+ * snes-rom selections refuse both, because their admitted lanes own the
+ * language, load, and entry semantics.
+ */
 export const rawBinarySelectionError = (input: {
   readonly format?: ExecutableFormatHint;
   readonly architecture?: unknown;

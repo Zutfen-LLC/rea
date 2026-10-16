@@ -47,4 +47,31 @@ describe("open_binary raw-binary input contract", () => {
       }).success,
     ).toBe(false);
   });
+  it("accepts snes-rom without architecture or entry", () => {
+    expect(
+      openBinaryInputSchema.safeParse({
+        path: "/tmp/game.sfc",
+        format: "snes-rom",
+      }).success,
+    ).toBe(true);
+  });
+  it("rejects mixed raw-binary flags with format=snes-rom", () => {
+    const architecture = openBinaryInputSchema.safeParse({
+      path: "/tmp/game.sfc",
+      format: "snes-rom",
+      architecture: "6502",
+    });
+    expect(architecture.success).toBe(false);
+    if (!architecture.success)
+      expect(architecture.error.issues[0]?.message).toContain(
+        "apply only with format=raw-binary",
+      );
+    expect(
+      openBinaryInputSchema.safeParse({
+        path: "/tmp/game.sfc",
+        format: "snes-rom",
+        entry_point: "0x8000",
+      }).success,
+    ).toBe(false);
+  });
 });

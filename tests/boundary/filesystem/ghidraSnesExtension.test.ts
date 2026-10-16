@@ -8,10 +8,14 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  snesExtensionContents,
+  writeSnesExtension,
+} from "../../fixtures/ghidraSnesInstallation.js";
 import {
   ghidraSnesExtensionSchema,
   inspectGhidraSnesExtension,
@@ -27,22 +31,7 @@ import type { GhidraInstallationInspection } from "../../../src/ghidra/GhidraIns
 // Ghidra 12.0.4: extension.properties declares name=SNES Loader and
 // version=12.0.4, and the language is 65816:LE:24:snes built from
 // data/languages/65816.ldefs with 65816.sla, 65816-snes.pspec and 65816.cspec.
-const SNES_PROPERTIES =
-  "name=SNES Loader\n" +
-  "description=Loader for SNES ROMs with LoROM/HiROM mapping and WRAM blocks.\n" +
-  "author=red\n" +
-  "createdOn=2026-05-01\n" +
-  "version=12.0.4\n";
-const SNES_CONTENTS: Record<string, string> = {
-  "Module.manifest":
-    "MODULE NAME: Ghidra-SNES\nMODULE DEPENDENCIES:\n    Ghidra\n",
-  "extension.properties": SNES_PROPERTIES,
-  "data/languages/65816.ldefs": "synthetic language definition",
-  "data/languages/65816.sla": "synthetic compiled processor",
-  "data/languages/65816-snes.pspec": "synthetic processor specification",
-  "data/languages/65816.cspec": "synthetic compiler specification",
-  "lib/ghidra-snes.jar": "synthetic loader artifact",
-};
+const SNES_CONTENTS = snesExtensionContents("12.0.4");
 
 vi.mock("../../../src/filesystem/RegularFile.js", async (importOriginal) => {
   const actual =
@@ -62,14 +51,9 @@ async function snesInstallation(options?: {
     options?.properties !== undefined
       ? { ...SNES_CONTENTS, "extension.properties": options.properties }
       : SNES_CONTENTS;
-  const order = options?.writeOrder ?? Object.keys(contents);
-  for (const path of order) {
-    const text = contents[path];
-    if (text === undefined)
-      throw new Error(`Unknown fixture component: ${path}`);
-    await mkdir(dirname(join(root, path)), { recursive: true });
-    await writeFile(join(root, path), text);
-  }
+  await writeSnesExtension(root, contents, (options?.writeOrder === undefined
+      ? {}
+      : { writeOrder: options.writeOrder }));
   return { directory, root };
 }
 

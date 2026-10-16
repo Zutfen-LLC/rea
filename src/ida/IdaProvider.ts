@@ -141,6 +141,14 @@ export class IdaProvider implements AnalysisProviderCandidate {
           "IDA does not admit headerless raw binaries. Open the target with Ghidra and supply architecture and entry_point.",
         diagnostics,
       };
+    if (target.format === "snes-rom")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "IDA does not admit SNES cartridge targets. Admitted SNES 65816 analysis requires the Ghidra adapter with its caller-installed ghidra-snes extension.",
+        diagnostics,
+      };
     return { status: "supported", code: null, reason: null, diagnostics };
   }
   async resolveAnalysisProfile(

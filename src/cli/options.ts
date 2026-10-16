@@ -17,23 +17,23 @@ export const providerSelectionOption = analysisProviderSelectorSchema
     "Bind deep analysis to a provider ID or use deterministic auto selection",
   );
 
-/** Explicit interpretation for headerless native executable formats. */
+/** Explicit interpretation for caller-selected executable formats. */
 export const formatSelectionOption = executableFormatHintSchema
   .optional()
   .describe(
-    "Explicit headerless interpretation (dos-com or raw-binary); omission preserves header-based detection",
+    "Explicit interpretation (dos-com, raw-binary, or snes-rom); omission preserves header-based detection",
   );
 
 export const architectureSelectionOption = binaryArchitectureSchema
   .optional()
   .describe(
-    "Caller-supplied CPU family; required with --target-format raw-binary",
+    "Caller-supplied CPU family; required with --target-format raw-binary and refused otherwise",
   );
 
 export const entryPointSelectionOption = rawBinaryEntryPointSchema
   .optional()
   .describe(
-    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary",
+    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary and refused otherwise",
   );
 
 /** Shared CLI flags that bind a native target interpretation. */

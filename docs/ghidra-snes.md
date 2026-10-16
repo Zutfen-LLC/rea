@@ -1,13 +1,15 @@
-# ghidra-snes extension identity inspection
+# ghidra-snes extension identity inspection and SNES target admission
 
 REA can fingerprint a caller-installed
 [ghidra-snes](https://github.com/joshleaves/ghidra-snes) Ghidra extension
-before any SNES-related work. This inspection establishes the extension's
-installed identity and prerequisites only. **Successful fingerprint inspection
-does not mean REA supports SNES ROMs.** REA does not admit SNES targets, does
-not import ROMs, and does not run `SnesRomLoader` through any CLI or MCP
-interface; those are separately reviewed downstream tasks. The upstream
-feasibility study behind this integration is
+before any SNES-related work, and admit a SNES cartridge as a typed
+`snes-rom` target with a pinned analysis profile. These boundaries establish
+installed-extension identity, target identity, and profile semantics only.
+**Successful admission does not mean REA analyzes SNES ROMs.** REA does not
+import ROMs and does not run `SnesRomLoader` through any CLI or MCP
+interface; opening an admitted `snes-rom` target refuses every analysis
+operation until loader execution is separately reviewed downstream. The
+upstream feasibility study behind this integration is
 [Zutfen-LLC/retro-reconstruction PR #6](https://github.com/Zutfen-LLC/retro-reconstruction/pull/6)
 (`docs/architecture/REA_65816_FEASIBILITY.md`).
 
@@ -135,6 +137,60 @@ reads files without copying them; no ghidra-snes binaries, language
 specifications, ROMs, or game content are committed to this repository, and
 synthetic tests use independently authored text only.
 
+## SNES target admission and profile
+
+Opening a file with `--target-format snes-rom` (CLI) or `format: "snes-rom"`
+(MCP `open_binary`) admits it as a typed executable target whose architecture
+is the declared `65816` family. The selection is explicit — a `.sfc` suffix or
+unrecognized bytes never select it — and it refuses the raw-binary
+`architecture`/`entry_point` flags, because the SNES lane owns its language
+and defers load semantics to the pinned loader rather than to a flat
+file-offset mapping.
+
+Admission validates the cartridge's internal header at the standard LoROM,
+HiROM, and ExHiROM candidate offsets (shifted by a supported copier prefix).
+The checks mirror the caller-installed ghidra-snes loader's own load-spec
+criteria, so REA admits exactly what the pinned loader would accept and no
+more: the file size must be bank-aligned with an optional `0x200`-byte
+copier header; the header checksum and complement must be XOR partners; the
+mapping-mode nibble at `$FFD5` must be one the loader recognizes (`lorom`,
+`hirom`, `s-dd1`, `sa-1`, `exhirom`, `spc7110`); the declared ROM size must
+cover the payload and stay under the loader's bound; the 21-byte title must
+be printable; and the whole-image checksum (with the loader's
+mirror-to-declared-size expansion) must match. Exactly one candidate may
+pass — zero or several valid headers fail closed as unusable or ambiguous
+cartridge metadata. The cartridge's 21-byte title text is never recorded in
+target metadata.
+
+The typed target carries the file digest plus the admitted cartridge facts
+(header offset, copier offset, payload and declared sizes, declared mapping
+mode, checksum word). These are file declarations, not established load
+semantics: no bank mapping and no entry point exist on this target, because
+the pinned `SnesRomLoader` — not the profile — establishes them when it runs.
+Resolving the profile additionally requires a selected, available Ghidra
+installation with a complete, version-matching ghidra-snes extension (see the
+inspection sections above); missing, incomplete, or version-mismatched
+extensions fail closed. `REA_GHIDRA_LANGUAGE_ID` cannot override the pinned
+`65816:LE:24:snes` language.
+
+The committed profile is deterministic for unchanged inputs: it pins
+`loader=SnesRomLoader`, `language_id=65816:LE:24:snes`, the compiler
+specification, the cartridge facts, and the inspected extension identity
+(including its content digest), so any extension rebuild or cartridge change
+produces a different profile digest. Snapshot reuse stays profile-exact: a
+snapshot from any other lane (for example a raw-binary profile) can never
+satisfy a `snes-rom` open. The profile deliberately commits no load-image or
+function-evidence semantics, and the Ghidra client refuses every analysis
+operation for a `snes-rom` target with an explicit not-yet-admitted reason —
+admission and profile resolution are the only successful operations in this
+increment. IDA and Hopper refuse `snes-rom` targets as unsupported formats.
+
+Admission is provider-independent at resolve time and Ghidra-bound at profile
+time; there is no auto-detection lane, no Fast HiROM claim, and no assumption
+that a mapping mode equals a verified memory mapping. Synthetic RED/GREEN
+admission and profile tests build their cartridge bytes in test code; no ROM
+images are committed or executed.
+
 ## Fingerprint validity is not runnable compatibility
 
 A valid fingerprint proves installed content identity and metadata binding
@@ -181,14 +237,18 @@ One real REA/Ghidra/ghidra-snes pairing was qualified on Linux x64 (tracker:
 - **Unsupported capabilities observed**: the Ghidra decompiler opens the
   program but produces no pseudocode for `65816:LE:24:snes` (decompilation
   does not complete, null result); `Module.manifest` parse warnings appear
-  on headless startup (cosmetic; loading and import still succeed). SNES
-  target admission, `SnesRomLoader` integration through REA's CLI/MCP
-  surface, and Fast HiROM mapping remain unimplemented and separately
-  scoped; this record does not claim REA analyzes SNES ROMs.
+  on headless startup (cosmetic; loading and import still succeed). At the
+  time of this record SNES target admission was unimplemented; it has since
+  been added, but `SnesRomLoader` integration through REA's CLI/MCP
+  execution surface and Fast HiROM mapping remain unimplemented and
+  separately scoped; this record does not claim REA analyzes SNES ROMs.
 
 ## Future integration boundaries
 
-Downstream tasks — SNES target admission (`--target-format snes-rom`),
-`SnesRomLoader` launch integration, reset-vector entry seeding, bank-mapping
-attestation, and CLI/MCP surface changes — are separately scoped and reviewed.
-This module intentionally adds no CLI or MCP capability and admits no target.
+SNES target admission and the pinned analysis profile are implemented (see
+[SNES target admission and profile](#snes-target-admission-and-profile)).
+Still downstream and separately scoped: `SnesRomLoader` launch integration
+through REA's CLI/MCP execution lane, reset-vector entry seeding, bank-mapping
+and Fast HiROM attestation, and decompiler verification. Until then, an
+admitted `snes-rom` target resolves identity and profile but refuses every
+analysis operation.

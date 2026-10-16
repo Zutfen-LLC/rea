@@ -30,6 +30,7 @@ import {
   admitRawBinary,
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
+import { admitSnesRom } from "../domain/snesRom.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
@@ -173,6 +174,37 @@ export const parseBinaryTarget = async (
           availableArchitectures: ["x86"],
         });
       }
+      if (formatHint === "snes-rom") {
+        if (targetKind !== undefined && targetKind !== "executable")
+          return err(
+            new BinaryTargetError(
+              path,
+              "snes-rom format requires an executable target kind",
+              { constraint: "load_selection_rejected" },
+            ),
+          );
+        const admitted = await admitSnesRom({
+          fileSize: metadata.size,
+          readAt: (offset, length) =>
+            readTargetBytes(handle, path, offset, length, signal),
+        });
+        if (!admitted.ok)
+          return err(
+            new BinaryTargetError(path, admitted.error.reason, {
+              constraint: admitted.error.constraint,
+            }),
+          );
+        return ok({
+          path,
+          sourcePath,
+          sha256: await sha256Handle(handle, path, metadata, signal),
+          kind: "executable",
+          format: "snes-rom",
+          architecture: "65816",
+          availableArchitectures: ["65816"],
+          cartridge: admitted.value,
+        });
+      }
       // Probe WASM content before suffix-only database routing; an explicit
       // database selection keeps the caller's chosen interpretation.
       const artifactFormat =
@@ -279,6 +311,23 @@ const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
     throw new AnalysisCancelledError("resolve_binary_target");
 };
 
+/** Read an exact byte range; a short read means the target changed mid-admission. */
+const readTargetBytes = async (
+  handle: FileHandle,
+  path: string,
+  offset: number,
+  length: number,
+  signal?: AbortSignal,
+): Promise<Buffer> => {
+  throwIfTargetResolutionCancelled(signal);
+  const buffer = Buffer.alloc(length);
+  const observed = await handle.read(buffer, 0, length, offset);
+  throwIfTargetResolutionCancelled(signal);
+  if (observed.bytesRead !== length)
+    throw new BinaryTargetError(path, "target changed while being read");
+  return buffer;
+};
+
 const detectArtifactFormat = async (
   path: string,
   handle: FileHandle,
@@ -294,6 +343,7 @@ const detectArtifactFormat = async (
       | "dos-mz"
       | "dos-com"
       | "raw-binary"
+      | "snes-rom"
     >
   | undefined
 > => {
@@ -394,6 +444,7 @@ const isArchiveFormat = (
     | "dos-mz"
     | "dos-com"
     | "raw-binary"
+    | "snes-rom"
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
   isZipPackageFormat(format) || ["asar", "dmg", "pkg"].includes(format);

@@ -27,6 +27,7 @@ import {
   ghidraPowerPcProfileParameters,
 } from "./GhidraPowerPcProfile.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import { resolveGhidraSnesExtension } from "./GhidraSnesExtension.js";
 
 import {
   ghidraProcessorUnsupportedReason,
@@ -107,6 +108,46 @@ export const resolveGhidraAnalysisProfile = async (
           analyzer_preset: `ghidra-default+disabled:${disabledAnalyzers.join(",")}`,
           analysis_options: { disabled_analyzers: [...disabledAnalyzers] },
         };
+  if (target.format === "snes-rom") {
+    // The SNES lane owns its language and defers load semantics to the
+    // pinned SnesRomLoader; a caller override would silently change them.
+    if (languageOverride !== undefined)
+      return Promise.resolve(
+        err(
+          new AnalysisUnsupportedTargetError(
+            "resolve_analysis_profile",
+            target.path,
+            "REA_GHIDRA_LANGUAGE_ID cannot override the pinned SNES 65816 language; the admitted SNES profile owns the loader and language selection.",
+          ),
+        ),
+      );
+    const snesExtension = await resolveGhidraSnesExtension(
+      installation,
+      signal,
+    );
+    if (!snesExtension.ok) return snesExtension;
+    return Promise.resolve(
+      ok({
+        profile: createAnalysisProfile(provider, {
+          target_kind: target.kind,
+          target_format: target.format,
+          architecture: target.architecture,
+          available_architectures: [...target.availableArchitectures].sort(),
+          import_mode: "ephemeral-source-immutable",
+          loader: "SnesRomLoader",
+          language_id: "65816:LE:24:snes",
+          compiler_spec_id: "default",
+          language_selection: "provider-pinned-v1",
+          // Header declarations only. The pinned loader — not this profile —
+          // establishes the bank mapping and entry when execution is admitted.
+          snes_cartridge: { ...target.cartridge },
+          mapping_entry_establishment: "deferred-to-snesromloader-v1",
+          snes_extension: { ...snesExtension.value },
+          ...analyzerParameters,
+        }),
+      }),
+    );
+  }
   if (target.format === "raw-binary") {
     if (languageOverride !== undefined)
       return Promise.resolve(

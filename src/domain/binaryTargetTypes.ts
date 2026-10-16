@@ -1,4 +1,5 @@
 import type { ZipPackageFormat } from "./zipPackageFormat.js";
+import type { SnesRomCartridge } from "./snesRom.js";
 
 /** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
 export const BINARY_ARCHITECTURES = [
@@ -12,6 +13,12 @@ export const BINARY_ARCHITECTURES = [
   "powerpc",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
+
+/**
+ * CPU family declared by an admitted SNES cartridge header. It exists only on
+ * the typed snes-rom target lane, never as a caller-supplied raw-binary family.
+ */
+export type SnesArchitecture = "65816";
 
 /**
  * ELF header facts for a family whose ISA and ABI are not established by the
@@ -44,7 +51,7 @@ export type ElfMetadataArchitecture =
 
 /** Families whose ISA and ABI need a separate ELF declaration to be admitted. */
 export const isElfMetadataArchitecture = (
-  architecture: BinaryArchitecture,
+  architecture: BinaryArchitecture | SnesArchitecture,
 ): architecture is ElfMetadataArchitecture =>
   (ELF_METADATA_ARCHITECTURES as readonly string[]).includes(architecture);
 
@@ -190,6 +197,20 @@ export type BinaryTarget =
       >[];
       readonly entryPoint: string;
       readonly entryPointSource: string;
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "snes-rom";
+      readonly architecture: SnesArchitecture;
+      readonly availableArchitectures: readonly SnesArchitecture[];
+      /**
+       * Facts from the single admitted internal header. They declare what the
+       * cartridge says about itself; no bank mapping or entry point exists on
+       * this target until the SNES loader establishes one.
+       */
+      readonly cartridge: SnesRomCartridge;
       readonly executableRole?: never;
       readonly managed?: never;
     })

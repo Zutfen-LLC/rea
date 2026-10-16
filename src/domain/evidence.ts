@@ -13,6 +13,7 @@ import {
   BINARY_ARCHITECTURES,
   type BinaryArchitecture,
   type BinaryTarget,
+  type SnesArchitecture,
 } from "./binaryTargetTypes.js";
 import {
   jsonObjectSchema,
@@ -47,6 +48,7 @@ const subjectFormatSchema = z.enum([
   "dos-mz",
   "dos-com",
   "raw-binary",
+  "snes-rom",
   "zip",
   "ipa",
   "apk",
@@ -76,12 +78,16 @@ const subjectBaseSchema = z.strictObject({
 // The format owns the architecture claim, including nested Evidence subjects.
 const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary"]),
+    format: subjectFormatSchema.exclude(["raw-binary", "snes-rom"]),
     architecture: z.enum(BINARY_ARCHITECTURES).exclude(["6502"]).nullable(),
   }),
   subjectBaseSchema.extend({
     format: z.literal("raw-binary"),
     architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
+  }),
+  subjectBaseSchema.extend({
+    format: z.literal("snes-rom"),
+    architecture: z.literal("65816"),
   }),
 ]);
 /** Source location attached to an evidence observation. */
@@ -201,7 +207,7 @@ export interface EvidenceSubjectTarget {
   readonly path: string;
   readonly sha256: string;
   readonly format: z.infer<typeof subjectSchema>["format"];
-  readonly architecture?: BinaryArchitecture;
+  readonly architecture?: BinaryArchitecture | SnesArchitecture;
 }
 
 /** Rebind a matching immutable artifact subject to the caller's selected path. */

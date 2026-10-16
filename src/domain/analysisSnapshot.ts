@@ -60,6 +60,7 @@ const formatSchema = z.enum([
   "dos-mz",
   "dos-com",
   "raw-binary",
+  "snes-rom",
   "zip",
   "ipa",
   "apk",
@@ -92,12 +93,16 @@ const subjectFormatSchema = z.enum([
 // Snapshot entries retain the same raw-only architecture boundary as targets.
 const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary"]),
+    format: subjectFormatSchema.exclude(["raw-binary", "snes-rom"]),
     architecture: architectureSchema.exclude(["6502"]).nullable(),
   }),
   subjectBaseSchema.extend({
     format: z.literal("raw-binary"),
     architecture: architectureSchema.nullable(),
+  }),
+  subjectBaseSchema.extend({
+    format: z.literal("snes-rom"),
+    architecture: z.literal("65816"),
   }),
 ]);
 const targetIdentitySchema = z.object({
@@ -108,7 +113,9 @@ const targetIdentitySchema = z.object({
 const targetSchema = z.discriminatedUnion("format", [
   targetIdentitySchema.extend({
     format: z.enum(
-      formatSchema.options.filter((format) => format !== "raw-binary"),
+      formatSchema.options.filter(
+        (format) => format !== "raw-binary" && format !== "snes-rom",
+      ),
     ),
     architecture: architectureSchema.exclude(["6502"]).nullable(),
   }),
@@ -117,6 +124,11 @@ const targetSchema = z.discriminatedUnion("format", [
     kind: z.literal("executable"),
     architecture: binaryArchitectureSchema,
     entry_point: rawBinaryEntryPointSchema,
+  }),
+  targetIdentitySchema.extend({
+    format: z.literal("snes-rom"),
+    kind: z.literal("executable"),
+    architecture: z.literal("65816"),
   }),
 ]);
 const bindingSchema = z
@@ -355,12 +367,19 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
         format: target.format,
         entry_point: target.entryPoint,
       }
-    : {
-        sha256: target.sha256,
-        kind: target.kind,
-        architecture: target.architecture ?? null,
-        format: target.format,
-      };
+    : target.format === "snes-rom"
+      ? {
+          sha256: target.sha256,
+          kind: target.kind,
+          architecture: target.architecture,
+          format: target.format,
+        }
+      : {
+          sha256: target.sha256,
+          kind: target.kind,
+          architecture: target.architecture ?? null,
+          format: target.format,
+        };
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (

@@ -375,6 +375,18 @@ export const createGhidraProviderClient = (input: {
 }): AnalysisClient => {
   const { config, logger, clientFactory, target, context, installation } =
     input;
+  // SNES admission stops at the typed target and analysis profile: the
+  // SnesRomLoader import lane is not executable through REA yet, and no
+  // analysis operation may report success for it.
+  if (target.format === "snes-rom")
+    return unavailableClient(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "SNES ROM admission resolves a typed target and analysis profile only; SnesRomLoader execution through REA is not admitted yet, so no analysis operation can succeed.",
+        },
+      }),
+    );
   const prerequisites = ghidraClientPrerequisites(
     target,
     input.profile,
