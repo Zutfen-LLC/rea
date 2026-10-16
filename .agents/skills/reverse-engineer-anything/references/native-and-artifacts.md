@@ -250,9 +250,19 @@ headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
 that address. Hopper and IDA refuse this interpretation; Ghidra uses
 `BinaryLoader` with a little-endian generic language. Big-endian, Thumb-only,
 and Cortex-M variants are unsupported. `6502` selects NMOS 6502; the entry and
-complete file mapping must fit within `0x0000..0xffff`. 65C02, 65816, cartridge
-containers, bank switching, and mapper semantics are unsupported. Windows
+complete file mapping must fit within `0x0000..0xffff`. 65C02 and 65816 stay
+unsupported in this headerless lane. Windows
 Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
+
+For SNES cartridge images, open with `format: "snes-rom"` (no `architecture`
+or `entry_point`; both are refused). Admission validates the internal header
+exactly as the caller-installed ghidra-snes loader would and resolves a typed
+`65816` target plus a pinned `65816:LE:24:snes`/`SnesRomLoader` profile under
+Ghidra. Cartridge containers outside the loader's criteria, copier formats
+beyond the `0x200`-byte prefix, and ambiguous headers fail closed. Bank
+mapping, entry, and all analysis operations are **not executable yet**; the
+open refuses them until `SnesRomLoader` integration lands. See
+[SNES guide](https://github.com/morluto/rea/blob/main/docs/ghidra-snes.md).
 
 ### Function annotations in Ghidra
 

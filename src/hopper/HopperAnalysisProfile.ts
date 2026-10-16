@@ -125,7 +125,7 @@ export const hopperLoaderArgsForTarget = (
   if (target.kind === "database") return ok([]);
   if (target.kind !== "executable")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
-  if (target.format === "raw-binary")
+  if (target.format === "raw-binary" || target.format === "snes-rom")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
   const architecture = target.architecture;
   if (isElfMetadataArchitecture(architecture))

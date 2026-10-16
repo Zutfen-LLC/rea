@@ -1,9 +1,17 @@
 import { z } from "zod";
 import { err, ok, type Result } from "./result.js";
 
-/** Headerless executable interpretation explicitly selected by the caller. */
-export const executableFormatHintSchema = z.enum(["dos-com", "raw-binary"]);
-/** Explicit executable interpretation for formats with no identifying header. */
+/**
+ * Caller-selected executable interpretation for formats without identifying
+ * file magic: headerless blobs (dos-com, raw-binary) and SNES cartridges,
+ * whose internal header is only found through explicit selection.
+ */
+export const executableFormatHintSchema = z.enum([
+  "dos-com",
+  "raw-binary",
+  "snes-rom",
+]);
+/** Explicitly selected executable interpretation; see {@link executableFormatHintSchema}. */
 export type ExecutableFormatHint = z.infer<typeof executableFormatHintSchema>;
 
 /** Validate the single 64 KiB COM segment, excluding its 256-byte PSP prefix. */

@@ -158,6 +158,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
           "DOS MZ/COM analysis requires the Ghidra 16-bit real-mode adapter.",
         diagnostics,
       };
+    if (target.format === "snes-rom")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "SNES cartridge analysis requires the Ghidra adapter with its caller-installed ghidra-snes extension.",
+        diagnostics,
+      };
     return {
       status: "supported",
       code: null,
