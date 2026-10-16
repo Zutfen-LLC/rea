@@ -96,6 +96,16 @@ installation. Cross-version compatibility is a separately authorized task;
 this inspection claims no interoperability and does not modify REA's Ghidra
 version support.
 
+A 12.1.x-compatible installation exists today only as a caller **port build**:
+rebuild the pinned upstream source against the selected 12.1.x distribution —
+Ghidra's own `support/buildExtension.gradle` tokenizes `extension.properties`
+`version=@extversion@` to the building distribution's version — then compile
+`data/languages/65816.slaspec` with that same distribution's `support/sleigh`,
+because the upstream build ships only the `.slaspec` and the inspector requires
+the compiled `.sla`. Upstream has published no 12.1.x-targeted release. One
+such pairing passed inspection and real execution checks on 2026-10-16; see
+the [qualified pairing record](#qualified-pairing-record-2026-10-16).
+
 ## Refusals
 
 Missing installations, noncanonical or symlinked roots, symlinked or
@@ -129,10 +139,52 @@ synthetic tests use independently authored text only.
 
 A valid fingerprint proves installed content identity and metadata binding
 only. It does not prove `SnesRomLoader` executes, that Ghidra loads the
-extension, or that any SNES image can be analyzed. Real-extension execution
-under this inspection is version-compatibility unverified: the pinned upstream
-extension targets Ghidra 12.0.4 while REA's verified Ghidra line is 12.1.x, so
-no compatible installed pairing exists to test.
+extension, or that any SNES image can be analyzed; those facts require
+separately recorded execution evidence, such as the qualification below.
+
+## Qualified pairing record (2026-10-16)
+
+One real REA/Ghidra/ghidra-snes pairing was qualified on Linux x64 (tracker:
+[Zutfen-LLC/retro-reconstruction issue
+#21](https://github.com/Zutfen-LLC/retro-reconstruction/issues/21)):
+
+- **Ghidra** `12.1.4 PUBLIC` build `20260921`
+  (`ghidra_12.1.4_PUBLIC_20260921.zip`, sha256
+  `ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db`),
+  Temurin JDK `21.0.12.1+1`, Gradle wrapper 9.3.1 from the upstream
+  extension.
+- **Extension source**
+  `joshleaves/ghidra-snes@d33ce5dbfbc3645f00449be1c7ca1c1c65e81756`. The
+  unmodified source compiles against the 12.1.4 API. The installed artifact
+  is a local port build as described above (version token stamped `12.1.4`,
+  `plugin.ghidraCompatibility=12.1.4`, SLEIGH compiled by 12.1.4's
+  `support/sleigh`); the port patch is not upstream and confers no upstream
+  compatibility claim.
+- **REA inspected identity**: `ghidra_version=12.1.4`, digest
+  `f650c5bd3986355ea7d0bc1279a31d4097e40fb652cdab75c2c52b97d092a42b`,
+  stable across repeated inspections.
+- **Executed, not inspection-only**: `analyzeHeadless` import of a fully
+  hand-authored synthetic two-bank LoROM 65816 fixture (sha256
+  `1d5bd865fdf679b43bc5fde5dd49904aeb92bbbc746ab21456a45578a81209e2`; no
+  commercial content) with `-loader SnesRomLoader -processor
+  65816:LE:24:snes` succeeded; memory blocks, reset-vector resolution, seeded
+  functions, M/X-dependent disassembly and JSL/RTL references matched the
+  earlier Ghidra 12.0.4 evidence byte for byte. REA's `verify:ghidra:raw`
+  lane passed against the same installation with the extension present
+  (`mocked: false`), and REA's language catalog resolved
+  `65816:LE:24:snes`/`default` from the installed extension.
+- **Negative controls**: a corrupt mapper byte and a broken checksum are
+  refused at import (`No load spec found`); an installation without the
+  extension fails closed (`Invalid loader name specified: SnesRomLoader`);
+  a 12.0.4-stamped copy is refused for a selected 12.1.4 (`ghidra-snes
+  extension metadata does not match`).
+- **Unsupported capabilities observed**: the Ghidra decompiler opens the
+  program but produces no pseudocode for `65816:LE:24:snes` (decompilation
+  does not complete, null result); `Module.manifest` parse warnings appear
+  on headless startup (cosmetic; loading and import still succeed). SNES
+  target admission, `SnesRomLoader` integration through REA's CLI/MCP
+  surface, and Fast HiROM mapping remain unimplemented and separately
+  scoped; this record does not claim REA analyzes SNES ROMs.
 
 ## Future integration boundaries
 
