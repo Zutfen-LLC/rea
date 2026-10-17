@@ -476,6 +476,58 @@ const rawLifecycleTargetSchema = z.object({
     "Canonical caller-selected address where raw file offset 0 is mapped and execution is seeded.",
   ),
 });
+const snesLifecycleTargetSchema = z.object({
+  ...lifecycleTargetFields,
+  format: z.literal("snes-rom"),
+  kind: z.literal("executable"),
+  architecture: z
+    .literal("65816")
+    .describe("CPU family declared by the admitted cartridge header."),
+  cartridge: z
+    .strictObject({
+      headerOffset: z
+        .number()
+        .int()
+        .min(0)
+        .describe("Absolute file offset of the admitted $FFBF header byte."),
+      romOffset: z
+        .number()
+        .int()
+        .min(0)
+        .describe("Copier/SMC prefix size; 0 for a clean bank-aligned dump."),
+      romSizeBytes: z
+        .number()
+        .int()
+        .min(0)
+        .describe("ROM payload bytes after any copier prefix."),
+      declaredRomSizeBytes: z
+        .number()
+        .int()
+        .min(0)
+        .describe("Cartridge size declared at $FFD7 as 1024 << exponent."),
+      declaredMapping: z
+        .enum(["lorom", "hirom", "s-dd1", "sa-1", "exhirom", "spc7110"])
+        .describe("Mapping mode the $FFD5 byte declares."),
+      mappingModeByte: z
+        .number()
+        .int()
+        .min(0)
+        .max(0xff)
+        .describe("Raw $FFD5 mapping-mode byte."),
+      declaredSpeed: z
+        .enum(["slow", "fast"])
+        .describe("Speed the $FFD5 FastROM bit declares."),
+      checksum: z
+        .number()
+        .int()
+        .min(0)
+        .max(0xffff)
+        .describe("16-bit checksum word carried by the admitted header."),
+    })
+    .describe(
+      "Admitted cartridge declarations; the bank mapping and entry are established only by the pinned SnesRomLoader execution lane.",
+    ),
+});
 
 /** Exact structured-content schemas for target lifecycle operations. */
 export const sessionOutputSchemas = {
@@ -483,6 +535,7 @@ export const sessionOutputSchemas = {
     z.discriminatedUnion("format", [
       detectedLifecycleTargetSchema,
       rawLifecycleTargetSchema,
+      snesLifecycleTargetSchema,
     ]),
   ),
   close_binary: lifecycleResultOf(
@@ -521,6 +574,10 @@ export const sessionOutputSchemas = {
       sessionProvider.extend({
         open: z.literal(true),
         ...rawLifecycleTargetSchema.shape,
+      }),
+      sessionProvider.extend({
+        open: z.literal(true),
+        ...snesLifecycleTargetSchema.shape,
       }),
     ]),
   ),

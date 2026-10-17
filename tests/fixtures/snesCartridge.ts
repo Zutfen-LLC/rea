@@ -6,8 +6,9 @@
  * caller-installed ghidra-snes extension (joshleaves/ghidra-snes@d33ce5db):
  * a header's checksum word and its XOR-0xFFFF complement contribute a
  * constant 0x1FE byte sum, and the whole-image checksum mirror-expands the
- * payload to the declared cartridge size. Independently authored; proves
- * nothing about SnesRomLoader execution.
+ * payload to the declared cartridge size. Independently authored; building
+ * these bytes proves nothing about SnesRomLoader execution, which is
+ * qualified separately against the real provider (verify:ghidra:65816).
  */
 
 /** $FFC0-relative title bases of the standard internal-header candidates. */
@@ -76,6 +77,13 @@ const expandToDeclared = (
   return expanded;
 };
 
+/** ROM-payload bytes placed before checksumming (65816 code, vectors). */
+export interface SnesCartridgeCode {
+  /** Payload-relative offset (after any copier prefix). */
+  readonly offset: number;
+  readonly bytes: Buffer;
+}
+
 /**
  * Build a synthetic cartridge image whose headers carry checksum words that
  * solve to a fixed point of the loader's whole-image (mirror-expanded, or
@@ -88,12 +96,18 @@ export const snesCartridgeImage = (
     readonly headerBases?: readonly number[];
     readonly copierHeader?: boolean;
     readonly breakComplement?: boolean;
+    readonly resetVector?: number;
+    readonly code?: readonly SnesCartridgeCode[];
   } & SnesCartridgeHeaderOptions = {},
 ): Buffer => {
   const size = options.sizeBytes ?? 0x10000;
   const bases = options.headerBases ?? [SNES_LOROM_TITLE_BASE];
   const image = Buffer.alloc(size, 0xea);
   image.fill(0x00, 0, Math.min(size, 0x100));
+  for (const chunk of options.code ?? []) chunk.bytes.copy(image, chunk.offset);
+  if (options.resetVector !== undefined)
+    for (const base of bases)
+      image.writeUInt16LE(options.resetVector, snesHeaderBase(base) + 0x3d);
   for (const base of bases) writeSnesHeader(image, base, options, size);
   const exponent = options.romSizeExponent ?? Math.log2(size / 1024) | 0;
   const declared = 1024 * 2 ** exponent;

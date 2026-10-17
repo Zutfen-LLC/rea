@@ -137,11 +137,17 @@ export const resolveGhidraAnalysisProfile = async (
           loader: "SnesRomLoader",
           language_id: "65816:LE:24:snes",
           compiler_spec_id: "default",
-          language_selection: "provider-pinned-v1",
-          // Header declarations only. The pinned loader — not this profile —
-          // establishes the bank mapping and entry when execution is admitted.
+          // Like the PSP lane, the SNES profile carries no generic
+          // language_selection slot: the loader pins the language and the
+          // client's import arguments and handshake expectations own it.
+          // The pinned loader establishes the bank mapping and reset-vector
+          // entry at import; REA attests them from measured observations and
+          // never assumes them from these header declarations.
           snes_cartridge: { ...target.cartridge },
-          mapping_entry_establishment: "deferred-to-snesromloader-v1",
+          mapping_attestation: "per-bank-file-backed-snesromloader-v1",
+          entry_resolution: "reset-vector-canonical-bank-v1",
+          entry_seed: "reset-vector-before-analysis-v1",
+          load_image_evidence: "independent-snes-bank-mapping-v1",
           snes_extension: { ...snesExtension.value },
           ...analyzerParameters,
         }),

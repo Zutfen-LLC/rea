@@ -37,6 +37,14 @@ export const nativeLoadImageObservationSchema = z.strictObject({
       source_file_index: integer.nullable(),
       file_offset: integer.nullable(),
       sha256: digest.nullable(),
+      byte_mapped_source: z
+        .strictObject({
+          start: address,
+          end: address,
+          address_space: z.string().min(1),
+        })
+        .nullable()
+        .optional(),
     }),
   ),
   relocations: z.array(
@@ -121,6 +129,58 @@ export const nativeLoadImageSchema = z.union([
     entry: z.strictObject({
       address: address,
       file_offset: z.literal(0),
+    }),
+    observations: nativeLoadImageObservationSchema,
+    checks: z.array(nativeLoadImageCheckSchema),
+    limitations: z.array(z.string().min(1)),
+  }),
+  z.strictObject({
+    status: z.enum(["verified", "mismatch"]),
+    format: z.literal("snes-rom"),
+    target_sha256: digest,
+    language_id: z.string().min(1),
+    compiler_spec_id: z.string().min(1),
+    declared_mapping: z.enum(["lorom", "hirom"]),
+    mapping_mode_byte: integer.max(0xff),
+    declared_speed: z.enum(["slow", "fast"]),
+    rom_offset: integer,
+    rom_size_bytes: integer.min(1),
+    declared_rom_size_bytes: integer.min(1),
+    checksum: integer.max(0xffff),
+    canonical_banks: z.array(
+      z.strictObject({
+        name: z.string().min(1),
+        bank: z.string().min(1),
+        start: address,
+        end: address,
+        length: integer.min(1),
+        file_offset: integer,
+        sha256: digest,
+      }),
+    ),
+    mirror_banks: z.array(
+      z.strictObject({
+        name: z.string().min(1),
+        start: address,
+        end: address,
+        length: integer.min(1),
+        canonical_start: address.nullable(),
+      }),
+    ),
+    system_blocks: z.array(
+      z.strictObject({
+        name: z.string().min(1),
+        start: address,
+        end: address,
+        length: integer.min(1),
+      }),
+    ),
+    reset_vector: z.strictObject({
+      address,
+      file_offset: integer,
+      value_hex: z.string().regex(/^0x[0-9a-f]{1,4}$/u),
+      entry: address,
+      entry_file_offset: integer,
     }),
     observations: nativeLoadImageObservationSchema,
     checks: z.array(nativeLoadImageCheckSchema),

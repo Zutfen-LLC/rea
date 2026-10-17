@@ -47,6 +47,11 @@ import {
   type GhidraPspExtension,
 } from "./GhidraPspExtension.js";
 
+import {
+  inspectGhidraSnesExtension,
+  type GhidraSnesExtension,
+} from "./GhidraSnesExtension.js";
+
 /** Private paths and identity material for one headless Ghidra import. */
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
@@ -160,6 +165,12 @@ export interface GhidraHeadlessLauncherOptions {
     readonly compilerSpecId: string;
     readonly baseAddr: string;
   };
+  /** Select the pinned SnesRomLoader import for an admitted cartridge. */
+  readonly snesRom?: {
+    readonly mapping: "lorom" | "hirom";
+    readonly vectorAddress: string;
+    readonly vectorFileOffset: number;
+  };
   /** Explicit import language committed by the analysis profile. */
   readonly languageOverride?: GhidraLanguageOverride;
   /** Auto-analyzers disabled before default auto-analysis, as configured. */
@@ -168,6 +179,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly analysisSeeds?: GhidraSeedCommitment;
   readonly analysisExtensions?: readonly GhidraExtension[];
   readonly pspExtension?: GhidraPspExtension;
+  /** Installed SNES identity committed at profile resolution, rechecked at spawn. */
+  readonly snesExtension?: GhidraSnesExtension;
   /** Remap typed float storage for the soft-float o32 ABI after analysis. */
   readonly mipsSoftFloat?: true;
   /** Spawn seam for provider-boundary lifecycle tests. */
@@ -277,6 +290,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         ...(this.options.rawBinary === undefined
           ? {}
           : { rawBinary: this.options.rawBinary }),
+        ...(this.options.snesRom === undefined
+          ? {}
+          : { snesRom: this.options.snesRom }),
         ...(this.options.languageOverride === undefined
           ? {}
           : { languageOverride: this.options.languageOverride }),
@@ -345,6 +361,15 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform === "win32"
           ? { ...scriptCommand, environment }
           : inspectedJavaLaunch;
+      // LaunchSupport and runtime preparation may await filesystem/process work.
+      // Recheck the committed installed SNES identity at the final spawn boundary,
+      // not only when the profile or client was constructed.
+      if (this.options.snesRom !== undefined)
+        await verifyGhidraSnesLaunch(
+          this.options,
+          session.providerVersion,
+          options.signal,
+        );
       started = await (this.options.spawnProcess ?? spawnOwnedProviderProcess)({
         command: command.command,
         arguments: command.arguments,
@@ -440,6 +465,55 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     }
   }
 }
+
+/** Fail closed on a stale installed SNES identity before the analysis JVM starts. */
+const verifyGhidraSnesLaunch = async (
+  launcher: GhidraHeadlessLauncherOptions,
+  providerVersion: string,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const snes = launcher.snesExtension;
+  if (snes === undefined)
+    throw new GhidraLaunchError(
+      "SNES import requires a committed ghidra-snes extension identity.",
+    );
+  const installRoot = await realpath(
+    dirname(dirname(launcher.analyzeHeadlessPath)),
+  );
+  const installedRoot = join(
+    installRoot,
+    "Ghidra",
+    "Extensions",
+    "ghidra-snes",
+  );
+  if (installedRoot !== snes.root)
+    throw new GhidraLaunchError(
+      "SNES profile does not belong to the selected Ghidra installation.",
+    );
+  const properties = parseGhidraJavaProperties(
+    await readFile(
+      join(installRoot, "Ghidra", "application.properties"),
+      "latin1",
+    ),
+  );
+  if (
+    snes.ghidra_version !== providerVersion ||
+    !properties.ok ||
+    properties.value.get("application.version") !== snes.ghidra_version
+  )
+    throw new GhidraLaunchError(
+      "SNES extension compatibility version no longer matches the selected Ghidra installation.",
+    );
+  const inspected = await inspectGhidraSnesExtension(
+    installedRoot,
+    snes.ghidra_version,
+    signal,
+  );
+  if (inspected.sha256 !== snes.sha256)
+    throw new GhidraLaunchError(
+      "Installed ghidra-snes content changed since profile resolution; reopen the target to resolve a fresh profile.",
+    );
+};
 
 const ownedGhidraLaunch = (
   spawned: SpawnedOwnedProviderProcess,
@@ -544,6 +618,11 @@ export interface GhidraHeadlessArgumentOptions {
     readonly compilerSpecId: string;
     readonly baseAddr: string;
   };
+  readonly snesRom?: {
+    readonly mapping: "lorom" | "hirom";
+    readonly vectorAddress: string;
+    readonly vectorFileOffset: number;
+  };
   readonly languageOverride?: GhidraLanguageOverride;
   /** Auto-analyzers disabled by the pre-analysis options script. */
   readonly disabledAnalyzers?: readonly string[];
@@ -562,14 +641,16 @@ export const ghidraHeadlessArguments = (
   const bridgeDirectory = scriptPath.dirname(options.bridgeScriptPath);
   const override = options.languageOverride;
   const rawBinary = options.rawBinary;
+  const snesRom = options.snesRom;
   if (
     options.psp === true &&
     (options.dosMz === true ||
       options.dosCom === true ||
+      snesRom !== undefined ||
       override !== undefined)
   )
     throw new Error(
-      "A PSP ELF import cannot be combined with DOS or a generic Ghidra language override.",
+      "A PSP ELF import cannot be combined with DOS, a SNES cartridge import, or a generic Ghidra language override.",
     );
   if (options.psp === true && rawBinary !== undefined)
     throw new Error(
@@ -580,10 +661,21 @@ export const ghidraHeadlessArguments = (
     (options.psp === true ||
       options.dosMz === true ||
       options.dosCom === true ||
+      snesRom !== undefined ||
       rawBinary !== undefined)
   )
     throw new Error(
       "MIPS soft-float storage applies only to a generic MIPS ELF import.",
+    );
+  if (
+    snesRom !== undefined &&
+    (options.dosMz === true ||
+      options.dosCom === true ||
+      rawBinary !== undefined ||
+      override !== undefined)
+  )
+    throw new Error(
+      "A SNES cartridge import cannot be combined with DOS, a raw-binary import, or a Ghidra language override.",
     );
   if (
     override !== undefined &&
@@ -629,24 +721,33 @@ export const ghidraHeadlessArguments = (
             "default",
           ]
         : rawBinary === undefined
-          ? options.psp === true
-            ? [
+          ? snesRom === undefined
+            ? options.psp === true
+              ? [
+                  "-loader",
+                  "PspElfLoader",
+                  "-processor",
+                  "Allegrex:LE:32:default",
+                  "-cspec",
+                  "default",
+                ]
+              : override !== undefined
+                ? [
+                    "-processor",
+                    override.languageId,
+                    ...(override.compilerSpecId === undefined
+                      ? []
+                      : ["-cspec", override.compilerSpecId]),
+                  ]
+                : []
+            : [
                 "-loader",
-                "PspElfLoader",
+                "SnesRomLoader",
                 "-processor",
-                "Allegrex:LE:32:default",
+                "65816:LE:24:snes",
                 "-cspec",
                 "default",
               ]
-            : override !== undefined
-              ? [
-                  "-processor",
-                  override.languageId,
-                  ...(override.compilerSpecId === undefined
-                    ? []
-                    : ["-cspec", override.compilerSpecId]),
-                ]
-              : []
           : [
               "-loader",
               "BinaryLoader",
@@ -671,6 +772,15 @@ export const ghidraHeadlessArguments = (
           scriptPath.join(bridgeDirectory, "ReaGhidraPrepareCom.java"),
         ]
       : []),
+    ...(snesRom === undefined
+      ? []
+      : [
+          "-preScript",
+          scriptPath.join(bridgeDirectory, "ReaGhidraPrepareSnes.java"),
+          snesRom.mapping,
+          snesRom.vectorAddress,
+          String(snesRom.vectorFileOffset),
+        ]),
     ...(rawBinary === undefined
       ? []
       : [

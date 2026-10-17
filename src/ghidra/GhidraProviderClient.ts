@@ -64,6 +64,7 @@ import {
   GHIDRA_PSP_LIMITATIONS,
 } from "./GhidraPspProfile.js";
 import { ghidraPspExtensionSchema } from "./GhidraPspExtension.js";
+import { ghidraSnesExtensionSchema } from "./GhidraSnesExtension.js";
 import {
   GHIDRA_MIPS_SOFT_FLOAT_STORAGE,
   ghidraMipsSoftFloatFailure,
@@ -77,6 +78,7 @@ import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraInstallationPolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
+import { snesResetVectorCoordinates } from "./GhidraSnesLoadImageValues.js";
 import {
   NATIVE_AOT_MAX_REPORT_BYTES,
   NATIVE_AOT_MAX_SOURCE_BYTES,
@@ -375,18 +377,23 @@ export const createGhidraProviderClient = (input: {
 }): AnalysisClient => {
   const { config, logger, clientFactory, target, context, installation } =
     input;
-  // SNES admission stops at the typed target and analysis profile: the
-  // SnesRomLoader import lane is not executable through REA yet, and no
-  // analysis operation may report success for it.
-  if (target.format === "snes-rom")
-    return unavailableClient(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "SNES ROM admission resolves a typed target and analysis profile only; SnesRomLoader execution through REA is not admitted yet, so no analysis operation can succeed.",
-        },
-      }),
-    );
+  // The single reset-vector derivation for the whole client: the admission
+  // gate refuses unqualified lanes on it, and the launcher wiring reuses it.
+  const snesVector =
+    target.format === "snes-rom"
+      ? snesResetVectorCoordinates(target.cartridge)
+      : undefined;
+  // The SnesRomLoader execution lane is qualified for the plain lorom and
+  // hirom canonical mappings only; every other declared mapping (s-dd1,
+  // sa-1, exhirom, spc7110) stays unexecuted rather than approximated.
+  if (snesVector !== undefined) {
+    if (!snesVector.ok)
+      return unavailableClient(
+        new ProviderAdapterError("ghidra", "open_binary", {
+          diagnostics: { reason: snesVector.error },
+        }),
+      );
+  }
   const prerequisites = ghidraClientPrerequisites(
     target,
     input.profile,
@@ -394,6 +401,27 @@ export const createGhidraProviderClient = (input: {
   );
   if (!prerequisites.ok) return unavailableClient(prerequisites.error);
   const committedProfile = prerequisites.value.profile;
+  const snesExtension =
+    target.format === "snes-rom"
+      ? ghidraSnesExtensionSchema.safeParse(
+          committedProfile.parameters.snes_extension,
+        )
+      : null;
+  if (
+    snesExtension !== null &&
+    (!snesExtension.success ||
+      committedProfile.parameters.language_id !== "65816:LE:24:snes" ||
+      committedProfile.parameters.compiler_spec_id !== "default" ||
+      committedProfile.parameters.loader !== "SnesRomLoader")
+  )
+    return unavailableClient(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the supported SNES profile and installed ghidra-snes extension before opening the session.",
+        },
+      }),
+    );
   const psp = isGhidraPspTarget(target);
   const pspExtension = psp
     ? ghidraPspExtensionSchema.safeParse(
@@ -563,6 +591,14 @@ export const createGhidraProviderClient = (input: {
           "Static analysis does not emulate reset vectors, memory-mapped I/O, or firmware boot sequences.",
         ]
       : []),
+    ...(target.format === "snes-rom"
+      ? [
+          "SNES analysis imports through the caller-installed ghidra-snes SnesRomLoader with the pinned 65816:LE:24:snes language. Canonical banks, the bank-$00 mirror, and the reset-vector entry are attested from the measured import; a mapping-mode declaration alone never establishes them.",
+          "The declared FastROM bit is recorded, not emulated: both slow and fast declarations map to the same canonical analysis banks, and no timing behavior is claimed.",
+          "65816 decode follows M/X register-mode tracking from the seeded reset entry; indirect or self-modifying mode switches can locally drift, and code coverage extends only to what is reachable from seeded entries. The language has no verified decompiler; request pseudocode through other lanes at your own risk of absence.",
+          "Only the plain lorom and hirom mappings are executed. Coprocessor cartridges (SA-1, S-DD1, SPC7110) and ExHiROM stay refused rather than approximated.",
+        ]
+      : []),
     ...(target.kind === "executable" && target.architecture === "mips"
       ? (target.mips.limitations ?? [])
       : []),
@@ -598,12 +634,18 @@ export const createGhidraProviderClient = (input: {
       bridgeScriptPath: fileURLToPath(
         new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
       ),
+      ...(snesExtension?.success === true
+        ? { snesExtension: snesExtension.data }
+        : {}),
       ...(pspExtension?.success === true
         ? { pspExtension: pspExtension.data }
         : {}),
       ...(softFloat ? { mipsSoftFloat: true as const } : {}),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
       ...(target.format === "dos-com" ? { dosCom: true } : {}),
+      ...(snesVector === undefined || !snesVector.ok
+        ? {}
+        : { snesRom: snesVector.value }),
       ...(rawLanguage === undefined || target.format !== "raw-binary"
         ? {}
         : {
@@ -655,6 +697,12 @@ export const createGhidraProviderClient = (input: {
     ...(psp
       ? {
           expectedLanguageId: "Allegrex:LE:32:default",
+          expectedCompilerSpecId: "default",
+        }
+      : {}),
+    ...(target.format === "snes-rom"
+      ? {
+          expectedLanguageId: "65816:LE:24:snes",
           expectedCompilerSpecId: "default",
         }
       : {}),

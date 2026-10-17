@@ -6,7 +6,7 @@ import {
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
 import { parseDosMzHeader, type DosMzHeader } from "../domain/dosMz.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -240,8 +240,10 @@ const checkMappings = (
   check(
     "initialized_unbacked_mappings",
     [],
-    observations.mappings.filter(
-      (mapping) => mapping.initialized && mapping.source_file_index === null,
+    jsonValueSchema.parse(
+      observations.mappings.filter(
+        (mapping) => mapping.initialized && mapping.source_file_index === null,
+      ),
     ),
   );
 };
