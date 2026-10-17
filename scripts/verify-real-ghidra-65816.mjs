@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createConnection } from "node:net";
+import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../dist/process/ProviderProcess.js";
+import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
 import {
   mkdir,
   mkdtemp,
@@ -296,7 +304,216 @@ async function qualifyCartridge(path, bytes, expectations) {
   return image;
 }
 
+// These faults cannot be selected through the public adapters: import a fresh
+// synthetic ROM directly, but run the actual preparation and bridge scripts.
+// Keep scriptPath isolated so unrelated local Java probes cannot be compiled.
+async function qualifyPreparationControls(providerVersion) {
+  const scripts = join(workspace, "preparation-scripts");
+  await mkdir(scripts);
+  for (const name of await readdir(join(root, "bridge", "ghidra")))
+    if (name.endsWith(".java"))
+      await writeFile(
+        join(scripts, name),
+        await readFile(join(root, "bridge", "ghidra", name)),
+      );
+  await writeFile(
+    join(scripts, "ConflictEntry.java"),
+    `import ghidra.app.script.GhidraScript;
+import ghidra.program.model.data.ByteDataType;
+public class ConflictEntry extends GhidraScript {
+    public void run() throws Exception {
+        createData(toAddr(0x808000), ByteDataType.dataType);
+        println("REA_SYNTH_ENTRY_DATA_CONFLICT_CREATED");
+    }
+}
+`,
+  );
+  const controls = [];
+  for (const [name, preparationError] of [
+    ["skipped-pre-script", null],
+    ["failed-script-arguments", "admitted lorom or hirom mapping, not invalid"],
+    ["unmappable-reset-vector", "not file-backed canonical ROM"],
+    ["entry-data-conflict", "SNES reset entry cannot be decoded as a function"],
+    ["prepared", null],
+  ]) {
+    const directory = join(workspace, name);
+    await mkdir(directory);
+    const bytes = cartridge({
+      resetVector: name === "unmappable-reset-vector" ? 0x40 : 0x8000,
+      code: [{ offset: 0, bytes: Buffer.from([0x78, 0x80, 0xfe, 0xea]) }],
+    });
+    assert.equal(bytes.length, 0x10000);
+    const target = join(directory, "synthetic.sfc");
+    await writeFile(target, bytes);
+    const endpoint = join(directory, "endpoint.json");
+    const descriptor = join(directory, "descriptor.json");
+    const token = randomUUID();
+    await writeFile(
+      descriptor,
+      JSON.stringify({
+        transport: "authenticated-loopback-tcp",
+        endpoint_path: endpoint,
+        token,
+        run_id: run.run_id,
+        target_sha256: sha256(bytes),
+        provider_version: providerVersion,
+        profile_digest: "synthetic-preparation-control",
+      }),
+      { mode: 0o600 },
+    );
+    const args = [
+      directory,
+      "PreparationControl",
+      "-import",
+      target,
+      "-processor",
+      "65816:LE:24:snes",
+      "-cspec",
+      "default",
+      "-loader",
+      "SnesRomLoader",
+      "-noanalysis",
+      "-scriptPath",
+      scripts,
+    ];
+    if (name === "entry-data-conflict")
+      args.push("-preScript", "ConflictEntry.java");
+    if (name !== "skipped-pre-script")
+      args.push(
+        "-preScript",
+        "ReaGhidraPrepareSnes.java",
+        name === "failed-script-arguments" ? "invalid" : "lorom",
+        "0x80fffc",
+        "32764",
+      );
+    args.push(
+      "-postScript",
+      "ReaGhidraBridge.java",
+      descriptor,
+      "-deleteProject",
+    );
+    const launch = await spawnOwnedProviderProcess({
+      command: join(
+        process.env.GHIDRA_INSTALL_DIR,
+        "support",
+        process.platform === "win32"
+          ? "analyzeHeadless.bat"
+          : "analyzeHeadless",
+      ),
+      arguments: args,
+      env,
+      runId: run.run_id,
+      expectedCommand: null,
+    });
+    const supervisor = new ProviderProcessSupervisor(
+      {
+        ...launch,
+        ownsProcessLifetime: true,
+        cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
+      },
+      { maxDiagnosticBytes: 1024 * 1024 },
+    );
+    let served = false;
+    let published = false;
+    let socket;
+    let lines;
+    try {
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        let address;
+        try {
+          address = JSON.parse(await readFile(endpoint, "utf8"));
+        } catch (cause) {
+          if (cause.code !== "ENOENT") throw cause;
+        }
+        if (address !== undefined) {
+          published = true;
+          assert.equal(address.host, "127.0.0.1");
+          socket = createConnection({ host: address.host, port: address.port });
+          socket.on("error", () => {});
+          socket.setTimeout(15000, () =>
+            socket.destroy(new Error("Bridge control request timed out")),
+          );
+          lines = createInterface({ input: socket });
+          const responses = lines[Symbol.asyncIterator]();
+          const request = async (id, method) => {
+            socket.write(
+              JSON.stringify({ id, token, method, params: {} }) + "\n",
+            );
+            const line = await responses.next();
+            assert.equal(line.done, false, "Bridge closed before replying");
+            const response = JSON.parse(line.value);
+            assert.equal(response.id, id);
+            return response;
+          };
+          const response = await request(1, "inspect_native_load_image");
+          served = response.ok === true;
+          assert.equal((await request(2, "shutdown")).ok, true);
+          break;
+        }
+        if (await supervisor.waitForExit(100)) break;
+        await delay(25);
+      }
+      assert.ok(
+        await supervisor.waitForExit(15000),
+        `${name}: headless deadline exceeded`,
+      );
+      assert.ok(
+        await supervisor.waitForOutputClose(1000),
+        `${name}: output did not close`,
+      );
+      const snapshot = supervisor.snapshot();
+      const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
+      assert.notEqual(snapshot.diagnosticTruncated, true, output);
+      assert.equal(snapshot.exitCode, 0, output);
+      assert.equal(snapshot.signal, null, output);
+      if (name === "prepared") {
+        assert.doesNotMatch(output, /REA SNES ROM entry preparation failed/u);
+        assert.equal(served, true, output);
+      } else {
+        // Headless may return zero after a script exception. The exact bridge
+        // gate AND the specific preparation fault must have been observed.
+        assert.ok(
+          output.includes("REA SNES ROM entry preparation failed"),
+          output,
+        );
+        if (preparationError !== null)
+          assert.ok(output.includes(preparationError), output);
+        if (name === "entry-data-conflict")
+          assert.ok(
+            output.includes("REA_SYNTH_ENTRY_DATA_CONFLICT_CREATED"),
+            output,
+          );
+        assert.equal(served, false, output);
+        assert.equal(published, false, output);
+      }
+      assert.deepEqual(await readFile(target), bytes);
+      assert.ok(
+        !(await readdir(directory)).some((file) => /\.gpr$|\.rep$/u.test(file)),
+        output,
+      );
+      controls.push({
+        control: name,
+        preparation_failure: preparationError,
+        bridge_refusal:
+          name === "prepared" ? null : "REA SNES ROM entry preparation failed",
+        endpoint_published: published,
+        served,
+      });
+    } finally {
+      lines?.close();
+      socket?.destroy();
+      const stopped = await supervisor.stop();
+      assert.notEqual(stopped.status, "incomplete", JSON.stringify(stopped));
+      supervisor.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+  return controls;
+}
+
 let report;
+let verifierRun;
 try {
   await client.connect(transport);
   const loromImage = await qualifyCartridge(loromPath, loromBytes, {
@@ -440,6 +657,51 @@ try {
   );
   await call("close_binary");
 
+  // Six MiB with a valid eight-MiB declaration remains a generically admitted
+  // cartridge, but neither qualified canonical bank layout can cover its tail.
+  const capacityControls = [];
+  for (const mapping of ["lorom", "hirom"]) {
+    const bytes = cartridge({
+      size: 6 * 1024 * 1024,
+      romSizeExponent: 13,
+      titleBase: mapping === "lorom" ? 0x7fc0 : 0xffc0,
+      mapperByte: mapping === "lorom" ? 0x20 : 0x31,
+      resetVector: 0x8000,
+    });
+    const path = join(workspace, `${mapping}-overcapacity.sfc`);
+    await writeFile(path, bytes);
+    await call("open_binary", {
+      path,
+      format: "snes-rom",
+      provider_id: "ghidra",
+    });
+    const refusal = await client.callTool(
+      { name: "inspect_native_load_image", arguments: {} },
+      { timeout: 240000 },
+    );
+    assert.equal(refusal.isError, true, JSON.stringify(refusal));
+    const capacityReason =
+      "exceeding the qualified canonical capacity of 4194304 bytes";
+    assert.ok(
+      JSON.stringify(refusal).includes(capacityReason),
+      JSON.stringify(refusal),
+    );
+    await call("close_binary");
+    assert.deepEqual(await readFile(path), bytes);
+    capacityControls.push({
+      mapping,
+      payload_bytes: bytes.length,
+      declared_bytes: 8 * 1024 * 1024,
+      generic_open_admitted: true,
+      analysis_refused: true,
+      reason: capacityReason,
+    });
+  }
+
+  const preparationControls = await qualifyPreparationControls(
+    loromImage.provider.version,
+  );
+
   // CLI/MCP parity for both cartridges through the same real provider.
   for (const [path, bytes, mcpImage] of [
     [loromPath, loromBytes, loromImage],
@@ -496,7 +758,11 @@ try {
       "corrupt-mapper-refused",
       "broken-checksum-refused",
       "sa-1-execution-refused",
+      "lorom-overcapacity-analysis-refused",
+      "hirom-overcapacity-analysis-refused",
     ],
+    preparation_controls: preparationControls,
+    capacity_controls: capacityControls,
     cli_mcp_load_image_parity: true,
     decompiler_claimed: false,
     source_unchanged: true,
@@ -509,15 +775,18 @@ try {
   try {
     await client.close();
   } finally {
-    await transport.close();
+    try {
+      await transport.close();
+    } finally {
+      verifierRun = await completeVerifierRun(run);
+      if (process.platform !== "win32") {
+        assert.equal(verifierRun.process_lineage.status, "verified");
+        assert.deepEqual(verifierRun.process_lineage.descendants, []);
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
   }
 }
-const verifierRun = await completeVerifierRun(run);
-if (process.platform !== "win32") {
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
-}
-await rm(workspace, { recursive: true, force: true });
 process.stdout.write(
   JSON.stringify({ verifier_run: verifierRun, ...report }) + "\n",
 );

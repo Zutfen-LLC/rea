@@ -89,7 +89,13 @@ different filesystem enumeration orders.
 **Ghidra** version — for the pinned upstream snapshot
 `joshleaves/ghidra-snes@d33ce5db` this is `12.0.4`. The inspector requires that
 property to equal the caller-selected Ghidra version and refuses mismatches
-with an actionable reason, before any provider execution. REA's verified Ghidra
+with an actionable reason, before any provider execution. The launcher carries the resolved extension
+root, Ghidra version, and SHA-256 from the committed profile and re-inspects
+that exact installed root immediately before starting the analysis process.
+Missing, replaced, modified, or incompatible content refuses launch; the
+caller must reopen to resolve a fresh profile after intentional changes.
+This is a final pre-spawn content check, not a filesystem lock against
+concurrent edits after the check. REA's verified Ghidra
 build is 12.1.4 accepting the 12.1.x line; a 12.0.4-targeted extension
 therefore cannot be represented as compatible with a selected 12.1.x
 installation. Cross-version compatibility is a separately authorized task;
@@ -201,10 +207,21 @@ canonical-bank address and file offset, resolves the entry from the vector
 value in the canonical header bank, requires the entry to land inside
 file-backed canonical ROM, and only then seeds the entry point, disassembly,
 and the entry function before default auto-analysis — mirroring the raw-binary
-and DOS lanes' preparation seam. Every other declared mapping (`s-dd1`,
+and DOS lanes' preparation seam. The script clears `REA SNES ROM prepared`
+first and sets it only after the complete vector read, disassembly, and
+entry-function creation succeed. The bridge independently requires that
+marker for `SNES ROM Loader` before serving requests, so an omitted, failed,
+or skipped pre-script cannot establish a usable analysis session. Every other declared mapping (`s-dd1`,
 `sa-1`, `exhirom`, `spc7110`) refuses the execution lane outright rather
 than approximating a coprocessor layout, and an admitted reset vector that
 cannot resolve inside the canonical payload also fails closed before launch.
+
+The executable capacity comes from pinned upstream `RomMapType.ranges()`:
+LoROM `$80-$FF` high halves and HiROM `$C0-$FF` full windows each represent
+at most 4 MiB. The execution and attestation lanes refuse larger payloads,
+including valid 6 MiB cartridges declaring 8 MiB. Exact 4 MiB payloads remain
+supported. This restriction does not change the separate generic cartridge
+admission contract, which may admit headers for larger or unqualified layouts.
 
 `inspect_native_load_image` (CLI and MCP) then verifies the measured import
 independently: it re-admits the cartridge from the captured snapshot bytes,
@@ -214,7 +231,13 @@ loader's uninitialized `snes_low_ram`/`snes_io`/`snes_wram` blocks, the
 declared mapping-mode and speed bytes, and the reset-vector entry, and
 compares each against Ghidra's measured mappings — block names, inclusive
 address windows, source file indices, file offsets, and per-bank content
-digests. The exact block set is compared, so unexpected extra file-backed
+digests. For the ROM mirror the bridge additionally measures the actual
+byte-mapped source range and address space from Ghidra, and attestation
+compares them with the independently derived expected anchor. The mirror's
+`canonical_start` records the measured source, or `null` when unknown;
+missing, unmeasurable, wrong-bank, wrong-range, or wrong-space backing can
+never verify solely because the visible block has the right shape. The new
+observation field is optional outside the SNES lane. The exact block set is compared, so unexpected extra file-backed
 mappings, missing banks, or a lost mirror surface as `mismatch` checks;
 a snapshot that no longer re-admits, an unqualified mapping, or an entry
 outside the canonical banks is an error, not a mismatch. The result records
@@ -318,6 +341,48 @@ head submitted for review:
   with any private commercial cartridge — a synthetic Fast HiROM pass does
   not qualify the private Secret of Evermore reference, which requires a
   separately gated investigation.
+
+## Exact-head correction qualification (2026-10-17 UTC)
+
+The PR #5 correction round retains the reviewed implementation as an ancestor
+and corrects mirror-source measurement, canonical capacity, launch-time
+extension integrity, and the mandatory preparation handshake. Exact final
+commit identities, RED/GREEN logs, final-head checks, and hosted CI receipts
+are recorded in [REA PR #5](https://github.com/Zutfen-LLC/rea/pull/5) and
+[tracker #23](https://github.com/Zutfen-LLC/retro-reconstruction/issues/23).
+The earlier execution record above is historical, not evidence for the
+corrected head.
+
+The isolated qualification installation uses the same authenticated Ghidra
+`12.1.4 PUBLIC` build `20260921` archive SHA-256 recorded above, Temurin
+`21.0.12.1+1`, and the pinned ghidra-snes source. The local port changes only
+`extension.properties` to use Ghidra's build-version token and sets the
+build's compatibility property to `12.1.4`; the loader is installed at the
+required `lib/ghidra-snes.jar` path and SLEIGH is compiled by that distribution.
+This is a fresh port build, not the historical installed artifact. Its
+inspected installed-content SHA-256 is
+`b1d626da536044ef8ca6b597ce6f2b1b12990d1573663bd2303e9f91f412d734`.
+
+The extended `verify:ghidra:65816` lane observes both original positive
+synthetic cartridges through CLI and MCP, including measured mirror sources,
+M/X-dependent instruction widths, `JSL` references, source immutability, and
+cleanup. It additionally:
+
+- Opens valid 6 MiB/declared-8 MiB cartridges through generic admission for
+  both mappings, then requires the specific canonical-capacity analysis refusal.
+- Executes real headless imports with skipped preparation, invalid preparation
+  arguments, an unmappable reset vector, and an entry-data conflict. Each must
+  reach the exact bridge preparation refusal, publish no endpoint, and serve no
+  analysis; a prepared control must serve load-image inspection and shutdown.
+- Removes ephemeral projects and generated workspaces and requires the final
+  observed process lineage to have no descendants.
+
+These controls passed in the real 12.1.4 environment. They establish only the
+bounded synthetic LoROM/Fast HiROM lanes; exact 4 MiB capacity is additionally
+covered by hermetic attestation tests, not a new full-size real-provider claim.
+No decompiler, unsupported mapper, or private Secret of Evermore compatibility
+is established. The launch-time identity check does not lock installed files
+against mutations after its final read.
 
 ## Future integration boundaries
 
