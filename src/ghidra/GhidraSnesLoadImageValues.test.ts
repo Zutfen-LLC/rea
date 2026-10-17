@@ -11,7 +11,11 @@ import {
   snesCartridgeImage,
   snesHeaderBase,
 } from "../../tests/fixtures/snesCartridge.js";
-import { attestGhidraSnesRomLoadImage } from "./GhidraSnesLoadImageValues.js";
+import { admitSnesRom } from "../domain/snesRom.js";
+import {
+  attestGhidraSnesRomLoadImage,
+  snesResetVectorCoordinates,
+} from "./GhidraSnesLoadImageValues.js";
 
 const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -161,7 +165,14 @@ const measuredObservations = (
     mappings: [
       unbacked("snes_low_ram", 0x000000, 0x2000),
       unbacked("snes_io", 0x002000, 0x4000),
-      unbacked("bank_00_rom_mirror", 0x008000, 0x8000),
+      {
+        ...unbacked("bank_00_rom_mirror", 0x008000, 0x8000),
+        byte_mapped_source: {
+          start: input.mapping === "lorom" ? "0x808000" : "0xc08000",
+          end: input.mapping === "lorom" ? "0x80ffff" : "0xc0ffff",
+          address_space: "bus",
+        },
+      },
       unbacked("snes_wram", 0x7e0000, 0x20000),
       ...input.banks.map((bank) => ({
         block: blockName(bank.bank),
@@ -487,4 +498,117 @@ describe("attestGhidraSnesRomLoadImage mismatch detection", () => {
     if (!attested.ok) throw attested.error;
     expect(snesResult(attested.value).status).toBe("mismatch");
   });
+});
+
+describe("qualified loader boundaries", () => {
+  describe.each(["lorom", "hirom"] as const)("%s mirror source", (mapping) => {
+    it.each([
+      ["absent", undefined],
+      ["unmeasurable", null],
+      [
+        "wrong anchor",
+        { start: "0x818000", end: "0x81ffff", address_space: "bus" },
+      ],
+      [
+        "wrong end",
+        {
+          start: mapping === "lorom" ? "0x808000" : "0xc08000",
+          end: "0xc0fffe",
+          address_space: "bus",
+        },
+      ],
+      [
+        "wrong space",
+        {
+          start: mapping === "lorom" ? "0x808000" : "0xc08000",
+          end: mapping === "lorom" ? "0x80ffff" : "0xc0ffff",
+          address_space: "other",
+        },
+      ],
+    ] as const)(
+      "refuses a correct-shaped mirror with %s source",
+      async (_label, source) => {
+        const bytes = mapping === "lorom" ? loromImage() : fastHiromImage();
+        const observations = measuredObservations(bytes, {
+          mapping,
+          romOffset: 0,
+          banks: mapping === "lorom" ? loromBanks(0) : hiromBanks(0),
+          entry: mapping === "lorom" ? 0x808000 : 0xc08000,
+        });
+        const mirror = observations.mappings.find(
+          (row) => row.block === "bank_00_rom_mirror",
+        )!;
+        if (source === undefined) delete mirror.byte_mapped_source;
+        else mirror.byte_mapped_source = source;
+        const result = await attest(bytes, observations);
+        if (!result.ok) throw result.error;
+        const image = snesResult(result.value);
+        expect(image.status).toBe("mismatch");
+        expect(image.mirror_banks[0]?.canonical_start).toBe(
+          source?.start ?? null,
+        );
+        expect(
+          image.checks.find(
+            (check) =>
+              check.name === "blocks[bank_00_rom_mirror].byte_mapped_source",
+          )?.matched,
+        ).toBe(false);
+      },
+    );
+  });
+
+  it.each(["lorom", "hirom"] as const)(
+    "%s accepts exact canonical capacity but refuses a valid 6MiB payload declaring 8MiB",
+    async (mapping) => {
+      for (const sizeBytes of [0x600000, 0x400000]) {
+        const bytes = snesCartridgeImage({
+          sizeBytes,
+          romSizeExponent: sizeBytes === 0x400000 ? 12 : 13,
+          mapperByte: mapping === "lorom" ? 0x20 : 0x31,
+          headerBases: [
+            mapping === "lorom" ? SNES_LOROM_TITLE_BASE : SNES_HIROM_TITLE_BASE,
+          ],
+          resetVector: 0x8000,
+        });
+        const admitted = await admitSnesRom({
+          fileSize: bytes.length,
+          readAt: async (offset, length) =>
+            bytes.subarray(offset, offset + length),
+        });
+        if (!admitted.ok) throw admitted.error;
+        expect(admitted.value.romSizeBytes).toBe(sizeBytes);
+        const coordinates = snesResetVectorCoordinates(admitted.value);
+        const observations = measuredObservations(bytes, {
+          mapping,
+          romOffset: 0,
+          // Model the actual upstream range exhaustion, not invented banks.
+          banks:
+            mapping === "lorom"
+              ? loromBanks(0, 0x400000)
+              : hiromBanks(0, 0x400000),
+          entry: mapping === "lorom" ? 0x808000 : 0xc08000,
+        });
+        const result = await attest(bytes, observations);
+        if (sizeBytes === 0x400000) {
+          if (!coordinates.ok) throw coordinates.error;
+          if (!result.ok) throw result.error;
+          expect(snesResult(result.value).status).toBe("verified");
+          expect(
+            snesResult(result.value).canonical_banks.reduce(
+              (sum, bank) => sum + bank.length,
+              0,
+            ),
+          ).toBe(sizeBytes);
+        } else {
+          expect(result.ok).toBe(false);
+          if (result.ok) throw new Error("unmapped tail attested");
+          expect(result.error).toContain("canonical capacity");
+          expect(coordinates.ok).toBe(false);
+          if (coordinates.ok)
+            throw new Error("unmapped tail accepted for execution");
+          expect(coordinates.error).toContain("canonical capacity");
+        }
+      }
+    },
+  );
 });

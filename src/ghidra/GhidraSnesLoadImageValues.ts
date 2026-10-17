@@ -6,7 +6,7 @@ import {
   type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { admitSnesRom } from "../domain/snesRom.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -34,20 +34,28 @@ interface ResetVectorResolution {
   readonly entryFileOffset: number;
 }
 
+// Pinned RomMapType.ranges(): LoROM $80-$FF high halves; HiROM
+// $C0-$FF full windows. Both exhaust after 4 MiB, regardless of declaration.
+const canonicalRange = (mapping: "lorom" | "hirom") => ({
+  firstBank: mapping === "lorom" ? 0x80 : 0xc0,
+  lastBank: 0xff,
+  bankBytes: mapping === "lorom" ? 0x8000 : 0x10000,
+  windowOffset: mapping === "lorom" ? 0x8000 : 0,
+});
+
 const canonicalChunks = (
   mapping: "lorom" | "hirom",
   romOffset: number,
   romSizeBytes: number,
 ): CanonicalChunk[] => {
   const chunks: CanonicalChunk[] = [];
-  const bankBytes = mapping === "lorom" ? 0x8000 : 0x10000;
-  const windowOffset = mapping === "lorom" ? 0x8000 : 0x0000;
-  const firstBank = mapping === "lorom" ? 0x80 : 0xc0;
+  const { bankBytes, windowOffset, firstBank, lastBank } =
+    canonicalRange(mapping);
   for (let index = 0; ; index += 1) {
     const payloadOffset = index * bankBytes;
     if (payloadOffset >= romSizeBytes) break;
     const bank = firstBank + index;
-    if (bank > 0xff) break;
+    if (bank > lastBank) break;
     const length = Math.min(bankBytes, romSizeBytes - payloadOffset);
     const start = (bank << 16) + windowOffset;
     chunks.push({
@@ -129,8 +137,7 @@ const canonicalVectorAddress = (
   mapping: "lorom" | "hirom",
   payloadOffset: number,
 ): { readonly address: number; readonly entryBank: number } => {
-  const bankBytes = mapping === "lorom" ? 0x8000 : 0x10000;
-  const firstBank = mapping === "lorom" ? 0x80 : 0xc0;
+  const { bankBytes, firstBank } = canonicalRange(mapping);
   const bankIndex = Math.floor(payloadOffset / bankBytes);
   return {
     address:
@@ -169,6 +176,12 @@ export const snesResetVectorCoordinates = (cartridge: {
       `The declared mapping '${cartridge.declaredMapping}' has no qualified SnesRomLoader execution lane`,
     );
   const mapping = cartridge.declaredMapping;
+  const range = canonicalRange(mapping);
+  const capacity = (range.lastBank - range.firstBank + 1) * range.bankBytes;
+  if (cartridge.romSizeBytes > capacity)
+    return err(
+      `The ${mapping} payload has ${cartridge.romSizeBytes} bytes, exceeding the qualified canonical capacity of ${capacity} bytes; unmapped ROM tails cannot be executed or attested`,
+    );
   const vectorFileOffset = cartridge.headerOffset + 0x3d;
   const payloadOffset = vectorFileOffset - cartridge.romOffset;
   if (payloadOffset < 0 || payloadOffset + 2 > cartridge.romSizeBytes)
@@ -221,11 +234,9 @@ export const attestGhidraSnesRomLoadImage = async (input: {
       `The captured SNES snapshot no longer admits as a valid cartridge: ${cartridge.error.reason}`,
     );
   const facts = cartridge.value;
-  if (facts.declaredMapping !== "lorom" && facts.declaredMapping !== "hirom")
-    return err(
-      `The declared mapping '${facts.declaredMapping}' is outside the qualified lorom/hirom SnesRomLoader execution lanes`,
-    );
-  const mapping = facts.declaredMapping;
+  const coordinates = snesResetVectorCoordinates(facts);
+  if (!coordinates.ok) return coordinates;
+  const mapping = coordinates.value.mapping;
   const chunks = canonicalChunks(mapping, facts.romOffset, facts.romSizeBytes);
   const vector = resolveResetVector(
     bytes,
@@ -313,12 +324,28 @@ export const attestGhidraSnesRomLoadImage = async (input: {
     mirrorAnchor(mapping, facts.headerOffset - facts.romOffset) + 0x8000 - 1 <=
       anchored.end;
   const mirrorStart = 0x008000;
-  if (mirrorCovered) unbackedShape("bank_00_rom_mirror", mirrorStart, 0x8000);
-  else
+  const measuredMirrorSource =
+    sole("bank_00_rom_mirror")?.byte_mapped_source ?? null;
+  if (mirrorCovered) {
+    unbackedShape("bank_00_rom_mirror", mirrorStart, 0x8000);
+    const expectedAnchor = mirrorAnchor(
+      mapping,
+      facts.headerOffset - facts.romOffset,
+    );
+    check(
+      "blocks[bank_00_rom_mirror].byte_mapped_source",
+      {
+        start: address(expectedAnchor),
+        end: address(expectedAnchor + 0x8000 - 1),
+        address_space: "bus",
+      },
+      measuredMirrorSource,
+    );
+  } else
     check(
       "blocks[bank_00_rom_mirror].absent",
       null,
-      sole("bank_00_rom_mirror") ?? null,
+      jsonValueSchema.parse(sole("bank_00_rom_mirror") ?? null),
     );
 
   // Check metadata carries the independently expected bank address, so a
@@ -448,9 +475,7 @@ export const attestGhidraSnesRomLoadImage = async (input: {
               start: address(mirrorStart),
               end: address(mirrorStart + 0x8000 - 1),
               length: 0x8000,
-              canonical_start: address(
-                mirrorAnchor(mapping, facts.headerOffset - facts.romOffset),
-              ),
+              canonical_start: measuredMirrorSource?.start ?? null,
             },
           ]
         : [],

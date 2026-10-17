@@ -15,6 +15,7 @@ import ghidra.program.model.mem.MemoryBlockSourceInfo;
 public final class ReaGhidraPrepareSnes extends GhidraScript {
     @Override
     public void run() throws Exception {
+        currentProgram.getOptions(Program.PROGRAM_INFO).setBoolean("REA SNES ROM prepared", false);
         String[] arguments = getScriptArgs();
         if (arguments.length != 3) {
             throw new IllegalArgumentException(
@@ -47,7 +48,10 @@ public final class ReaGhidraPrepareSnes extends GhidraScript {
             );
         }
         byte[] word = new byte[2];
-        currentProgram.getMemory().getBytes(vector, word);
+        int read = currentProgram.getMemory().getBytes(vector, word);
+        if (read != word.length) {
+            throw new IllegalStateException("SNES reset vector could not be read completely");
+        }
         int value = (word[0] & 0xff) | ((word[1] & 0xff) << 8);
         long entryBank = vector.getOffset() >>> 16;
         Address entry = currentProgram.getAddressFactory().getDefaultAddressSpace()

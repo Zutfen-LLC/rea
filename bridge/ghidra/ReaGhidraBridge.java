@@ -213,6 +213,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 );
             }
         }
+        if (currentProgram.getExecutableFormat().equals("SNES ROM Loader") &&
+            !currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+                .getBoolean("REA SNES ROM prepared", false)) {
+            throw new IllegalStateException("REA SNES ROM entry preparation failed");
+        }
         if (!Application.getApplicationVersion().equals(descriptor.providerVersion)) {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
@@ -640,6 +645,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 else mapping.addProperty("file_offset", offset);
                 if (block.isInitialized()) mapping.addProperty("sha256", hashMemory(source.getMinAddress(), source.getLength()));
                 else mapping.add("sha256", JsonNull.INSTANCE);
+                if (block.getType() == ghidra.program.model.mem.MemoryBlockType.BYTE_MAPPED) {
+                    var mappedRange = source.getMappedRange();
+                    if (mappedRange.isPresent()) {
+                        var range = mappedRange.get();
+                        JsonObject mappedSource = new JsonObject();
+                        mappedSource.addProperty("start", canonicalAddress(range.getMinAddress()));
+                        mappedSource.addProperty("end", canonicalAddress(range.getMaxAddress()));
+                        mappedSource.addProperty("address_space", range.getMinAddress().getAddressSpace().getName());
+                        mapping.add("byte_mapped_source", mappedSource);
+                    } else mapping.add("byte_mapped_source", JsonNull.INSTANCE);
+                }
                 mappings.add(mapping);
             }
         }

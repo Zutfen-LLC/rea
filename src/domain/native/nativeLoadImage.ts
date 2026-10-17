@@ -37,6 +37,14 @@ export const nativeLoadImageObservationSchema = z.strictObject({
       source_file_index: integer.nullable(),
       file_offset: integer.nullable(),
       sha256: digest.nullable(),
+      byte_mapped_source: z
+        .strictObject({
+          start: address,
+          end: address,
+          address_space: z.string().min(1),
+        })
+        .nullable()
+        .optional(),
     }),
   ),
   relocations: z.array(
@@ -156,7 +164,7 @@ export const nativeLoadImageSchema = z.union([
         start: address,
         end: address,
         length: integer.min(1),
-        canonical_start: address,
+        canonical_start: address.nullable(),
       }),
     ),
     system_blocks: z.array(
