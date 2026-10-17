@@ -64,6 +64,7 @@ import {
   GHIDRA_PSP_LIMITATIONS,
 } from "./GhidraPspProfile.js";
 import { ghidraPspExtensionSchema } from "./GhidraPspExtension.js";
+import { ghidraSnesExtensionSchema } from "./GhidraSnesExtension.js";
 import {
   GHIDRA_MIPS_SOFT_FLOAT_STORAGE,
   ghidraMipsSoftFloatFailure,
@@ -400,6 +401,27 @@ export const createGhidraProviderClient = (input: {
   );
   if (!prerequisites.ok) return unavailableClient(prerequisites.error);
   const committedProfile = prerequisites.value.profile;
+  const snesExtension =
+    target.format === "snes-rom"
+      ? ghidraSnesExtensionSchema.safeParse(
+          committedProfile.parameters.snes_extension,
+        )
+      : null;
+  if (
+    snesExtension !== null &&
+    (!snesExtension.success ||
+      committedProfile.parameters.language_id !== "65816:LE:24:snes" ||
+      committedProfile.parameters.compiler_spec_id !== "default" ||
+      committedProfile.parameters.loader !== "SnesRomLoader")
+  )
+    return unavailableClient(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the supported SNES profile and installed ghidra-snes extension before opening the session.",
+        },
+      }),
+    );
   const psp = isGhidraPspTarget(target);
   const pspExtension = psp
     ? ghidraPspExtensionSchema.safeParse(
@@ -612,6 +634,9 @@ export const createGhidraProviderClient = (input: {
       bridgeScriptPath: fileURLToPath(
         new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
       ),
+      ...(snesExtension?.success === true
+        ? { snesExtension: snesExtension.data }
+        : {}),
       ...(pspExtension?.success === true
         ? { pspExtension: pspExtension.data }
         : {}),

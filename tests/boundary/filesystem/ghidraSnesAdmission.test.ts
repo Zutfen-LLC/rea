@@ -1,6 +1,9 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
+import { GhidraHeadlessLauncher } from "../../../src/ghidra/GhidraLauncher.js";
+import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   snesExtensionContents,
@@ -107,6 +110,202 @@ async function snesInstallation(options?: {
     provider: new GhidraProvider(parsed.value, silentLogger, {}, host),
   };
 }
+
+async function resolvedLaunch() {
+  const installation = await snesInstallation();
+  await writeFile(
+    join(installation.directory, "Ghidra", "application.properties"),
+    "application.version=12.1.4\napplication.release.name=PUBLIC\n",
+  );
+  let captured: GhidraHeadlessLauncher | undefined;
+  const factory = vi.fn(
+    (options: ConstructorParameters<typeof GhidraClient>[0]) => {
+      if (!(options.launcher instanceof GhidraHeadlessLauncher))
+        throw new Error("Expected production headless launcher");
+      captured = options.launcher;
+      return new GhidraClient(options);
+    },
+  );
+  const provider = new GhidraProvider(
+    installation.config,
+    silentLogger,
+    {},
+    host,
+    factory,
+  );
+  const resolved = await provider.resolveAnalysisProfile(snesTarget);
+  if (!resolved.ok) throw resolved.error;
+  const profile = resolved.value.profile;
+  if (profile === null) throw new Error("Missing SNES profile");
+  provider.createClient(snesTarget, profile);
+  if (captured === undefined)
+    throw new Error("Client did not construct launcher");
+  const spawnProcess = vi.fn(async () => {
+    throw new Error("synthetic spawn boundary reached");
+  });
+  const javaLaunch = vi.fn(async () => ({
+    command: process.execPath,
+    arguments: [],
+    environment: {},
+  }));
+  const launcher = new GhidraHeadlessLauncher({
+    ...captured.options,
+    javaLaunch,
+    spawnProcess,
+  });
+  const session = {
+    runtimeRoot: join(installation.directory, "runtime"),
+    transport: "unix-socket" as const,
+    endpointPath: join(installation.directory, "bridge.sock"),
+    token: "synthetic-token",
+    runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+    targetPath: snesTarget.path,
+    targetSha256: snesTarget.sha256,
+    providerVersion: "12.1.4",
+    profileDigest: profile.digest,
+  };
+  return {
+    ...installation,
+    provider,
+    profile,
+    launcher,
+    session,
+    factory,
+    spawnProcess,
+    javaLaunch,
+  };
+}
+
+// Exercise the real profile -> provider client -> launcher path. Only Java
+// discovery and the final spawn are simulated; no ROM or Ghidra runs here.
+describe.skipIf(process.platform === "win32")(
+  "SNES committed extension launch boundary",
+  () => {
+    it.each([
+      "loader modified",
+      "language modified",
+      "loader replaced",
+      "missing root",
+      "relocated root",
+      "symlinked root",
+      "incompatible metadata",
+      "changed Ghidra version",
+      "changed during Java discovery",
+    ])("refuses a stale resolved commitment: %s", async (change) => {
+      const f = await resolvedLaunch();
+      const jar = join(f.root, "lib/ghidra-snes.jar");
+      if (change === "loader modified") await writeFile(jar, "modified loader");
+      if (change === "language modified")
+        await writeFile(
+          join(f.root, "data/languages/65816.sla"),
+          "modified language",
+        );
+      if (change === "loader replaced") {
+        await rename(jar, `${jar}.old`);
+        await writeFile(jar, "replacement loader");
+      }
+      if (change === "missing root") await rm(f.root, { recursive: true });
+      if (change === "relocated root") {
+        const other = await snesInstallation();
+        await writeFile(
+          join(other.directory, "Ghidra", "application.properties"),
+          "application.version=12.1.4\napplication.release.name=PUBLIC\n",
+        );
+        // Identical bytes at another installed root must not satisfy the commitment.
+        const launcher = new GhidraHeadlessLauncher({
+          ...f.launcher.options,
+          analyzeHeadlessPath: join(
+            other.directory,
+            "support",
+            "analyzeHeadless",
+          ),
+        });
+        const result = await launcher.launch(f.session);
+        expect(f.spawnProcess).not.toHaveBeenCalled();
+        if (result.ok) throw new Error("Relocated extension was launched");
+        expect(String(result.error.cause)).toContain(
+          "does not belong to the selected Ghidra installation",
+        );
+        return;
+      }
+      if (change === "symlinked root") {
+        await rename(f.root, `${f.root}.moved`);
+        await symlink(`${f.root}.moved`, f.root);
+      }
+      if (change === "incompatible metadata")
+        await writeFile(
+          join(f.root, "extension.properties"),
+          "name=SNES Loader\nversion=12.0.4\n",
+        );
+      if (change === "changed Ghidra version")
+        await writeFile(
+          join(f.directory, "Ghidra/application.properties"),
+          "application.version=12.2.0\n",
+        );
+      if (change === "changed during Java discovery")
+        f.javaLaunch.mockImplementationOnce(async () => {
+          await writeFile(jar, "changed immediately before spawn");
+          return { command: process.execPath, arguments: [], environment: {} };
+        });
+      const result = await f.launcher.launch(f.session);
+      expect(f.spawnProcess).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Stale SNES extension was launched");
+      expect(String(result.error.cause)).toMatch(/ghidra-snes|SNES/u);
+    });
+
+    it("passes the unchanged resolved extension to the spawn boundary", async () => {
+      const f = await resolvedLaunch();
+      const result = await f.launcher.launch(f.session);
+      expect(f.javaLaunch).toHaveBeenCalledOnce();
+      expect(f.spawnProcess).toHaveBeenCalledOnce();
+      if (result.ok) throw new Error("Synthetic spawn unexpectedly succeeded");
+      expect(String(result.error.cause)).toContain(
+        "synthetic spawn boundary reached",
+      );
+    });
+
+    it("refuses a session version inconsistent with the committed extension", async () => {
+      const f = await resolvedLaunch();
+      const result = await f.launcher.launch({
+        ...f.session,
+        providerVersion: "12.2.0",
+      });
+      expect(f.spawnProcess).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+    });
+
+    it.each([
+      undefined,
+      {},
+      {
+        id: "ghidra-snes",
+        root: "/elsewhere",
+        ghidra_version: "12.1.4",
+        sha256: "bad",
+      },
+    ])(
+      "refuses a missing or malformed committed SNES identity: %j",
+      async (identity) => {
+        const f = await resolvedLaunch();
+        const { snes_extension: _omitted, ...parameters } =
+          f.profile.parameters;
+        const profile = createAnalysisProfile(f.profile.provider, {
+          ...parameters,
+          ...(identity === undefined ? {} : { snes_extension: identity }),
+        });
+        f.factory.mockClear();
+        const client = f.provider.createClient(snesTarget, profile);
+        expect(f.factory).not.toHaveBeenCalled();
+        const result = await client.execute("read_bytes", {
+          address: "0x808000",
+          length: 1,
+        });
+        expect(result.ok).toBe(false);
+      },
+    );
+  },
+);
 
 describe.skipIf(process.platform === "win32")(
   "SNES target admission and profile",

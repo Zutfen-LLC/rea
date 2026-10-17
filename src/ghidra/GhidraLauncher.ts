@@ -47,6 +47,11 @@ import {
   type GhidraPspExtension,
 } from "./GhidraPspExtension.js";
 
+import {
+  inspectGhidraSnesExtension,
+  type GhidraSnesExtension,
+} from "./GhidraSnesExtension.js";
+
 /** Private paths and identity material for one headless Ghidra import. */
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
@@ -174,6 +179,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly analysisSeeds?: GhidraSeedCommitment;
   readonly analysisExtensions?: readonly GhidraExtension[];
   readonly pspExtension?: GhidraPspExtension;
+  /** Installed SNES identity committed at profile resolution, rechecked at spawn. */
+  readonly snesExtension?: GhidraSnesExtension;
   /** Remap typed float storage for the soft-float o32 ABI after analysis. */
   readonly mipsSoftFloat?: true;
   /** Spawn seam for provider-boundary lifecycle tests. */
@@ -354,6 +361,15 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform === "win32"
           ? { ...scriptCommand, environment }
           : inspectedJavaLaunch;
+      // LaunchSupport and runtime preparation may await filesystem/process work.
+      // Recheck the committed installed SNES identity at the final spawn boundary,
+      // not only when the profile or client was constructed.
+      if (this.options.snesRom !== undefined)
+        await verifyGhidraSnesLaunch(
+          this.options,
+          session.providerVersion,
+          options.signal,
+        );
       started = await (this.options.spawnProcess ?? spawnOwnedProviderProcess)({
         command: command.command,
         arguments: command.arguments,
@@ -449,6 +465,55 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     }
   }
 }
+
+/** Fail closed on a stale installed SNES identity before the analysis JVM starts. */
+const verifyGhidraSnesLaunch = async (
+  launcher: GhidraHeadlessLauncherOptions,
+  providerVersion: string,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const snes = launcher.snesExtension;
+  if (snes === undefined)
+    throw new GhidraLaunchError(
+      "SNES import requires a committed ghidra-snes extension identity.",
+    );
+  const installRoot = await realpath(
+    dirname(dirname(launcher.analyzeHeadlessPath)),
+  );
+  const installedRoot = join(
+    installRoot,
+    "Ghidra",
+    "Extensions",
+    "ghidra-snes",
+  );
+  if (installedRoot !== snes.root)
+    throw new GhidraLaunchError(
+      "SNES profile does not belong to the selected Ghidra installation.",
+    );
+  const properties = parseGhidraJavaProperties(
+    await readFile(
+      join(installRoot, "Ghidra", "application.properties"),
+      "latin1",
+    ),
+  );
+  if (
+    snes.ghidra_version !== providerVersion ||
+    !properties.ok ||
+    properties.value.get("application.version") !== snes.ghidra_version
+  )
+    throw new GhidraLaunchError(
+      "SNES extension compatibility version no longer matches the selected Ghidra installation.",
+    );
+  const inspected = await inspectGhidraSnesExtension(
+    installedRoot,
+    snes.ghidra_version,
+    signal,
+  );
+  if (inspected.sha256 !== snes.sha256)
+    throw new GhidraLaunchError(
+      "Installed ghidra-snes content changed since profile resolution; reopen the target to resolve a fresh profile.",
+    );
+};
 
 const ownedGhidraLaunch = (
   spawned: SpawnedOwnedProviderProcess,
