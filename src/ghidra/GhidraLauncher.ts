@@ -160,6 +160,12 @@ export interface GhidraHeadlessLauncherOptions {
     readonly compilerSpecId: string;
     readonly baseAddr: string;
   };
+  /** Select the pinned SnesRomLoader import for an admitted cartridge. */
+  readonly snesRom?: {
+    readonly mapping: "lorom" | "hirom";
+    readonly vectorAddress: string;
+    readonly vectorFileOffset: number;
+  };
   /** Explicit import language committed by the analysis profile. */
   readonly languageOverride?: GhidraLanguageOverride;
   /** Auto-analyzers disabled before default auto-analysis, as configured. */
@@ -277,6 +283,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         ...(this.options.rawBinary === undefined
           ? {}
           : { rawBinary: this.options.rawBinary }),
+        ...(this.options.snesRom === undefined
+          ? {}
+          : { snesRom: this.options.snesRom }),
         ...(this.options.languageOverride === undefined
           ? {}
           : { languageOverride: this.options.languageOverride }),
@@ -544,6 +553,11 @@ export interface GhidraHeadlessArgumentOptions {
     readonly compilerSpecId: string;
     readonly baseAddr: string;
   };
+  readonly snesRom?: {
+    readonly mapping: "lorom" | "hirom";
+    readonly vectorAddress: string;
+    readonly vectorFileOffset: number;
+  };
   readonly languageOverride?: GhidraLanguageOverride;
   /** Auto-analyzers disabled by the pre-analysis options script. */
   readonly disabledAnalyzers?: readonly string[];
@@ -562,14 +576,16 @@ export const ghidraHeadlessArguments = (
   const bridgeDirectory = scriptPath.dirname(options.bridgeScriptPath);
   const override = options.languageOverride;
   const rawBinary = options.rawBinary;
+  const snesRom = options.snesRom;
   if (
     options.psp === true &&
     (options.dosMz === true ||
       options.dosCom === true ||
+      snesRom !== undefined ||
       override !== undefined)
   )
     throw new Error(
-      "A PSP ELF import cannot be combined with DOS or a generic Ghidra language override.",
+      "A PSP ELF import cannot be combined with DOS, a SNES cartridge import, or a generic Ghidra language override.",
     );
   if (options.psp === true && rawBinary !== undefined)
     throw new Error(
@@ -580,10 +596,21 @@ export const ghidraHeadlessArguments = (
     (options.psp === true ||
       options.dosMz === true ||
       options.dosCom === true ||
+      snesRom !== undefined ||
       rawBinary !== undefined)
   )
     throw new Error(
       "MIPS soft-float storage applies only to a generic MIPS ELF import.",
+    );
+  if (
+    snesRom !== undefined &&
+    (options.dosMz === true ||
+      options.dosCom === true ||
+      rawBinary !== undefined ||
+      override !== undefined)
+  )
+    throw new Error(
+      "A SNES cartridge import cannot be combined with DOS, a raw-binary import, or a Ghidra language override.",
     );
   if (
     override !== undefined &&
@@ -629,24 +656,33 @@ export const ghidraHeadlessArguments = (
             "default",
           ]
         : rawBinary === undefined
-          ? options.psp === true
-            ? [
+          ? snesRom === undefined
+            ? options.psp === true
+              ? [
+                  "-loader",
+                  "PspElfLoader",
+                  "-processor",
+                  "Allegrex:LE:32:default",
+                  "-cspec",
+                  "default",
+                ]
+              : override !== undefined
+                ? [
+                    "-processor",
+                    override.languageId,
+                    ...(override.compilerSpecId === undefined
+                      ? []
+                      : ["-cspec", override.compilerSpecId]),
+                  ]
+                : []
+            : [
                 "-loader",
-                "PspElfLoader",
+                "SnesRomLoader",
                 "-processor",
-                "Allegrex:LE:32:default",
+                "65816:LE:24:snes",
                 "-cspec",
                 "default",
               ]
-            : override !== undefined
-              ? [
-                  "-processor",
-                  override.languageId,
-                  ...(override.compilerSpecId === undefined
-                    ? []
-                    : ["-cspec", override.compilerSpecId]),
-                ]
-              : []
           : [
               "-loader",
               "BinaryLoader",
@@ -671,6 +707,15 @@ export const ghidraHeadlessArguments = (
           scriptPath.join(bridgeDirectory, "ReaGhidraPrepareCom.java"),
         ]
       : []),
+    ...(snesRom === undefined
+      ? []
+      : [
+          "-preScript",
+          scriptPath.join(bridgeDirectory, "ReaGhidraPrepareSnes.java"),
+          snesRom.mapping,
+          snesRom.vectorAddress,
+          String(snesRom.vectorFileOffset),
+        ]),
     ...(rawBinary === undefined
       ? []
       : [

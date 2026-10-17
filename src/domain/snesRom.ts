@@ -18,6 +18,17 @@ const DECLARED_MAPPINGS = {
 export type SnesDeclaredMapping =
   (typeof DECLARED_MAPPINGS)[keyof typeof DECLARED_MAPPINGS];
 
+/**
+ * Speed the $FFD5 high-nibble FastROM bit declares (bit 4). A header
+ * declaration only; the loader maps both speeds to the same canonical banks.
+ */
+export type SnesDeclaredSpeed = "slow" | "fast";
+
+/** Header-declared speed from the raw $FFD5 mapping-mode byte. */
+export const snesDeclaredSpeed = (
+  mappingModeByte: number,
+): SnesDeclaredSpeed => ((mappingModeByte & 0x10) !== 0 ? "fast" : "slow");
+
 // Header candidates are the $FFBF bytes preceding the $FFC0 title at the
 // standard LoROM, HiROM, and ExHiROM locations, shifted by any copier header.
 const HEADER_CANDIDATES = [0x7fbf, 0xffbf, 0x40ffbf] as const;
@@ -50,6 +61,10 @@ export interface SnesRomCartridge {
   readonly declaredRomSizeBytes: number;
   /** Mapping mode the $FFD5 byte declares. */
   readonly declaredMapping: SnesDeclaredMapping;
+  /** Raw $FFD5 mapping-mode byte, carrying the declared FastROM speed bit. */
+  readonly mappingModeByte: number;
+  /** Speed the $FFD5 FastROM bit declares. */
+  readonly declaredSpeed: SnesDeclaredSpeed;
   /** 16-bit checksum word carried by the admitted header. */
   readonly checksum: number;
 }
@@ -64,6 +79,7 @@ interface HeaderCandidate {
   readonly headerOffset: number;
   readonly declaredRomSizeBytes: number;
   readonly declaredMapping: SnesDeclaredMapping;
+  readonly mappingModeByte: number;
   readonly checksum: number;
 }
 
@@ -135,6 +151,8 @@ export const admitSnesRom = async (input: {
     romSizeBytes,
     declaredRomSizeBytes: admitted.declaredRomSizeBytes,
     declaredMapping: admitted.declaredMapping,
+    mappingModeByte: admitted.mappingModeByte,
+    declaredSpeed: snesDeclaredSpeed(admitted.mappingModeByte),
     checksum: admitted.checksum,
   });
 };
@@ -147,9 +165,10 @@ const parseHeaderCandidate = (
   const checksum = header.readUInt16LE(CHECKSUM_OFFSET);
   const complement = header.readUInt16LE(CHECKSUM_COMPLEMENT_OFFSET);
   if (((checksum ^ complement) & 0xffff) !== 0xffff) return undefined;
+  const mappingModeByte = header[MAPPING_MODE_OFFSET]!;
   const declaredMapping = (
     DECLARED_MAPPINGS as Record<number, SnesDeclaredMapping | undefined>
-  )[header[MAPPING_MODE_OFFSET]! & 0x0f];
+  )[mappingModeByte & 0x0f];
   if (declaredMapping === undefined) return undefined;
   const declaredRomSizeBytes = 1024 * 2 ** header[ROM_SIZE_OFFSET]!;
   if (
@@ -165,6 +184,7 @@ const parseHeaderCandidate = (
     headerOffset,
     declaredRomSizeBytes,
     declaredMapping,
+    mappingModeByte,
     checksum,
   };
 };

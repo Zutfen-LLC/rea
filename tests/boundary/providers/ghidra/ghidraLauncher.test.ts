@@ -120,6 +120,75 @@ describe("Ghidra COM loader", () => {
   });
 });
 
+describe("Ghidra SNES loader", () => {
+  it("pins the SNES loader and reset-vector preparation before auto-analysis", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/game.sfc",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      snesRom: {
+        mapping: "hirom",
+        vectorAddress: "0xc0fffc",
+        vectorFileOffset: 0xfffc,
+      },
+    });
+    expectOptions(arguments_, [
+      ["-loader", "SnesRomLoader"],
+      ["-processor", "65816:LE:24:snes"],
+      ["-cspec", "default"],
+    ]);
+    expect(arguments_).not.toContain("-loader-baseAddr");
+    const prepare = arguments_.indexOf("-preScript");
+    expect(arguments_[prepare + 1]).toBe(
+      join("/package/bridge", "ReaGhidraPrepareSnes.java"),
+    );
+    expect(arguments_[prepare + 2]).toBe("hirom");
+    expect(arguments_[prepare + 3]).toBe("0xc0fffc");
+    expect(arguments_[prepare + 4]).toBe(String(0xfffc));
+    expect(prepare).toBeLessThan(arguments_.indexOf("-postScript"));
+    expect(arguments_).toContain("-readOnly");
+    expect(arguments_).toContain("-deleteProject");
+  });
+
+  it("never combines a SNES import with the other pinned lanes", () => {
+    const shared = {
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/game.sfc",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      snesRom: {
+        mapping: "lorom",
+        vectorAddress: "0x80fffc",
+        vectorFileOffset: 0x7ffc,
+      } as const,
+    };
+    expect(() => ghidraHeadlessArguments({ ...shared, dosCom: true })).toThrow(
+      /cannot be combined/u,
+    );
+    expect(() =>
+      ghidraHeadlessArguments({
+        ...shared,
+        rawBinary: {
+          languageId: "6502:LE:16:default",
+          compilerSpecId: "default",
+          baseAddr: "0x8000",
+        },
+      }),
+    ).toThrow(/cannot be combined/u);
+    expect(() =>
+      ghidraHeadlessArguments({
+        ...shared,
+        languageOverride: { languageId: "6502:LE:16:default" },
+      }),
+    ).toThrow(/cannot be combined/u);
+  });
+});
+
 describe("Ghidra raw-binary loader", () => {
   it("loads caller-supplied architecture and entry before auto-analysis", () => {
     const arguments_ = ghidraHeadlessArguments({

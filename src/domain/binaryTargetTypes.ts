@@ -207,8 +207,9 @@ export type BinaryTarget =
       readonly availableArchitectures: readonly SnesArchitecture[];
       /**
        * Facts from the single admitted internal header. They declare what the
-       * cartridge says about itself; no bank mapping or entry point exists on
-       * this target until the SNES loader establishes one.
+       * cartridge says about itself; the bank mapping and reset-vector entry
+       * are established only by the pinned SnesRomLoader execution lane and
+       * attested from its measured import, never assumed from these facts.
        */
       readonly cartridge: SnesRomCartridge;
       readonly executableRole?: never;

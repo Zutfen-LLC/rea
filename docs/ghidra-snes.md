@@ -2,14 +2,12 @@
 
 REA can fingerprint a caller-installed
 [ghidra-snes](https://github.com/joshleaves/ghidra-snes) Ghidra extension
-before any SNES-related work, and admit a SNES cartridge as a typed
-`snes-rom` target with a pinned analysis profile. These boundaries establish
-installed-extension identity, target identity, and profile semantics only.
-**Successful admission does not mean REA analyzes SNES ROMs.** REA does not
-import ROMs and does not run `SnesRomLoader` through any CLI or MCP
-interface; opening an admitted `snes-rom` target refuses every analysis
-operation until loader execution is separately reviewed downstream. The
-upstream feasibility study behind this integration is
+before any SNES-related work, admit a SNES cartridge as a typed `snes-rom`
+target with a pinned analysis profile, and — for the qualified plain `lorom`
+and `hirom` mappings — import the cartridge through the real
+`SnesRomLoader`, seed its reset-vector entry, and independently attest the
+loader-established per-bank file-backed mapping from measured import
+observations. The upstream feasibility study behind this integration is
 [Zutfen-LLC/retro-reconstruction PR #6](https://github.com/Zutfen-LLC/retro-reconstruction/pull/6)
 (`docs/architecture/REA_65816_FEASIBILITY.md`).
 
@@ -164,32 +162,76 @@ target metadata.
 
 The typed target carries the file digest plus the admitted cartridge facts
 (header offset, copier offset, payload and declared sizes, declared mapping
-mode, checksum word). These are file declarations, not established load
-semantics: no bank mapping and no entry point exist on this target, because
-the pinned `SnesRomLoader` — not the profile — establishes them when it runs.
-Resolving the profile additionally requires a selected, available Ghidra
-installation with a complete, version-matching ghidra-snes extension (see the
-inspection sections above); missing, incomplete, or version-mismatched
-extensions fail closed. `REA_GHIDRA_LANGUAGE_ID` cannot override the pinned
+mode and raw mapping-mode byte with its FastROM speed bit, checksum word).
+These are file declarations, not established load semantics: the bank mapping
+and reset-vector entry are established only by the pinned `SnesRomLoader`
+when it runs, and every analysis result attests them from measured import
+observations rather than assuming them from these facts. Resolving the
+profile additionally requires a selected, available Ghidra installation with
+a complete, version-matching ghidra-snes extension (see the inspection
+sections above); missing, incomplete, or version-mismatched extensions fail
+closed. `REA_GHIDRA_LANGUAGE_ID` cannot override the pinned
 `65816:LE:24:snes` language.
 
 The committed profile is deterministic for unchanged inputs: it pins
 `loader=SnesRomLoader`, `language_id=65816:LE:24:snes`, the compiler
-specification, the cartridge facts, and the inspected extension identity
-(including its content digest), so any extension rebuild or cartridge change
-produces a different profile digest. Snapshot reuse stays profile-exact: a
-snapshot from any other lane (for example a raw-binary profile) can never
-satisfy a `snes-rom` open. The profile deliberately commits no load-image or
-function-evidence semantics, and the Ghidra client refuses every analysis
-operation for a `snes-rom` target with an explicit not-yet-admitted reason —
-admission and profile resolution are the only successful operations in this
-increment. IDA and Hopper refuse `snes-rom` targets as unsupported formats.
+specification, the cartridge facts, the execution-lane semantics
+(`mapping_attestation`, `entry_resolution`, `entry_seed`,
+`load_image_evidence`), and the inspected extension identity (including its
+content digest), so any extension rebuild or cartridge change produces a
+different profile digest. Snapshot reuse stays profile-exact: a snapshot from
+any other lane (for example a raw-binary profile) can never satisfy a
+`snes-rom` open. IDA and Hopper refuse `snes-rom` targets as unsupported
+formats.
 
 Admission is provider-independent at resolve time and Ghidra-bound at profile
-time; there is no auto-detection lane, no Fast HiROM claim, and no assumption
-that a mapping mode equals a verified memory mapping. Synthetic RED/GREEN
-admission and profile tests build their cartridge bytes in test code; no ROM
-images are committed or executed.
+time; there is no auto-detection lane and no assumption that a mapping mode
+equals a verified memory mapping. Synthetic RED/GREEN admission and profile
+tests build their cartridge bytes in test code; no ROM images are committed.
+
+## SnesRomLoader execution and per-bank mapping attestation
+
+Opening a `snes-rom` session whose admitted mapping is `lorom` or `hirom`
+launches one read-only ephemeral `analyzeHeadless` import with
+`-loader SnesRomLoader -processor 65816:LE:24:snes -cspec default` and the
+`ReaGhidraPrepareSnes` pre-analysis script. The script refuses anything but
+the pinned language and the loader's `SNES ROM Loader` executable format,
+verifies that the admitted reset-vector word is file-backed at its committed
+canonical-bank address and file offset, resolves the entry from the vector
+value in the canonical header bank, requires the entry to land inside
+file-backed canonical ROM, and only then seeds the entry point, disassembly,
+and the entry function before default auto-analysis — mirroring the raw-binary
+and DOS lanes' preparation seam. Every other declared mapping (`s-dd1`,
+`sa-1`, `exhirom`, `spc7110`) refuses the execution lane outright rather
+than approximating a coprocessor layout, and an admitted reset vector that
+cannot resolve inside the canonical payload also fails closed before launch.
+
+`inspect_native_load_image` (CLI and MCP) then verifies the measured import
+independently: it re-admits the cartridge from the captured snapshot bytes,
+re-derives every canonical bank (LoROM high-window banks from `$80`, HiROM
+full-window banks from `$C0`), the anchored `bank_00_rom_mirror`, the
+loader's uninitialized `snes_low_ram`/`snes_io`/`snes_wram` blocks, the
+declared mapping-mode and speed bytes, and the reset-vector entry, and
+compares each against Ghidra's measured mappings — block names, inclusive
+address windows, source file indices, file offsets, and per-bank content
+digests. The exact block set is compared, so unexpected extra file-backed
+mappings, missing banks, or a lost mirror surface as `mismatch` checks;
+a snapshot that no longer re-admits, an unqualified mapping, or an entry
+outside the canonical banks is an error, not a mismatch. The result records
+the canonical banks, mirrors, system blocks, and reset-vector resolution
+with both expected and observed values, and carries explicit limitations:
+no decompiler is claimed for `65816:LE:24:snes`, the FastROM bit is recorded
+but not emulated, and decode coverage extends only to code reachable from
+seeded entries.
+
+The qualification lane `npm run verify:ghidra:65816` (bring-your-own
+`GHIDRA_INSTALL_DIR` with the extension installed) builds fully synthetic
+LoROM and Fast HiROM cartridges from independently authored 65816 opcode
+bytes, asserts the verified per-bank attestation, seeded entry function,
+M/X-mode-dependent instruction widths, and the far-call reference through
+the real provider over MCP and CLI, and exercises the corrupt-mapper,
+broken-checksum, and `sa-1` refusal controls. No commercial ROM is read,
+generated, or committed at any point.
 
 ## Fingerprint validity is not runnable compatibility
 
@@ -243,12 +285,50 @@ One real REA/Ghidra/ghidra-snes pairing was qualified on Linux x64 (tracker:
   execution surface and Fast HiROM mapping remain unimplemented and
   separately scoped; this record does not claim REA analyzes SNES ROMs.
 
+## Qualified execution record (2026-10-16)
+
+One real `SnesRomLoader` execution-and-attestation qualification ran on Linux
+x64 against the same installation as the pairing record above (Ghidra
+`12.1.4 PUBLIC` build `20260921`, port-built ghidra-snes
+`d33ce5dbfbc3645f00449be1c7ca1c1c65e81756`, inspected digest
+`f650c5bd…`), through REA's `npm run verify:ghidra:65816` lane on the exact
+head submitted for review:
+
+- **SYNTHETIC_LOROM = PASS.** A fully synthetic two-bank LoROM cartridge
+  (sha256 `eb598f2b3bfda4676c4c597a2cb0c9cfc366e46ed5479dde014e9e1b08a887b1`,
+  64 KiB, independently authored 65816 opcodes) imported through REA's MCP
+  and CLI with `status: verified` for every canonical bank mapping, the
+  anchored mirror, system blocks, the reset vector `$80:FFFC → $80:8000`, the
+  seeded entry function, M/X-mode-dependent instruction widths (8-bit and
+  16-bit `LDA` immediates), and the `JSL`→`$81:8000` far-call reference.
+- **SYNTHETIC_FAST_HIROM = PASS.** A fully synthetic Fast HiROM cartridge
+  (map mode `$31`, sha256
+  `f6fecff65f040c214e1d8af6aadae5c7f116f5502a7c4ea3331c03fd4bc0adef`,
+  128 KiB) imported the same way: full-window banks `$C0`/`$C1`, mirror
+  anchored at `$C0:8000`, reset vector `$C0:FFFC → $C0:8000`, seeded entry
+  function, mode-dependent widths, and the `JSL`→`$C1:0000` reference.
+- **SNES_ROM_IMPORT = PASS** for these two lanes, with CLI/MCP parity,
+  unchanged sources, and complete runtime cleanup observed by the lane.
+- **Negative controls refused as designed:** a corrupted mapping-mode byte
+  and a broken checksum complement never reach execution; an `sa-1`
+  cartridge admits as a target but every analysis operation refuses its
+  unqualified execution lane.
+- **Not claimed:** no decompiler/pseudocode lane for `65816:LE:24:snes`, no
+  coprocessor/ExHiROM execution, no real ROM analysis, and no compatibility
+  with any private commercial cartridge — a synthetic Fast HiROM pass does
+  not qualify the private Secret of Evermore reference, which requires a
+  separately gated investigation.
+
 ## Future integration boundaries
 
-SNES target admission and the pinned analysis profile are implemented (see
-[SNES target admission and profile](#snes-target-admission-and-profile)).
-Still downstream and separately scoped: `SnesRomLoader` launch integration
-through REA's CLI/MCP execution lane, reset-vector entry seeding, bank-mapping
-and Fast HiROM attestation, and decompiler verification. Until then, an
-admitted `snes-rom` target resolves identity and profile but refuses every
-analysis operation.
+SNES target admission, the pinned analysis profile, the `lorom`/`hirom`
+`SnesRomLoader` execution lane with reset-vector entry seeding, and the
+per-bank file-backed mapping attestation are implemented (see
+[SNES target admission and profile](#snes-target-admission-and-profile) and
+[SnesRomLoader execution and per-bank mapping
+attestation](#snesromloader-execution-and-per-bank-mapping-attestation)).
+Still downstream and separately scoped: coprocessor and ExHiROM execution
+lanes (currently refused rather than approximated) and any decompiler
+verification for `65816:LE:24:snes`. A passing synthetic Fast HiROM
+qualification does not by itself qualify a private commercial ROM; that
+requires a separately authorized investigation against the actual cartridge.

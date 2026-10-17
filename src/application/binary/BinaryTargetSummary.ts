@@ -8,4 +8,7 @@ export const binaryTargetSummary = (target: BinaryTarget) => ({
   sha256: target.sha256,
   architecture: target.architecture ?? null,
   ...(target.format === "raw-binary" ? { entry_point: target.entryPoint } : {}),
+  ...(target.format === "snes-rom"
+    ? { cartridge: { ...target.cartridge } }
+    : {}),
 });

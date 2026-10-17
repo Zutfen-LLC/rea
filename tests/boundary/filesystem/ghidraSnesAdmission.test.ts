@@ -34,7 +34,20 @@ const snesTarget = {
     romSizeBytes: 0x10000,
     declaredRomSizeBytes: 0x10000,
     declaredMapping: "lorom",
+    mappingModeByte: 0x20,
+    declaredSpeed: "slow",
     checksum: 0xbe56,
+  },
+} satisfies BinaryTarget;
+
+const unsupportedMapperTarget = {
+  ...snesTarget,
+  path: "/caller/sa1.sfc",
+  sha256: "c".repeat(64),
+  cartridge: {
+    ...snesTarget.cartridge,
+    declaredMapping: "sa-1" as const,
+    mappingModeByte: 0x23,
   },
 } satisfies BinaryTarget;
 
@@ -76,7 +89,11 @@ async function snesInstallation(options?: {
     options?.properties !== undefined
       ? { ...SNES_CONTENTS, "extension.properties": options.properties }
       : SNES_CONTENTS;
-  await writeSnesExtension(root, contents, (options?.omit === undefined ? {} : { omit: options.omit }));
+  await writeSnesExtension(
+    root,
+    contents,
+    options?.omit === undefined ? {} : { omit: options.omit },
+  );
   await mkdir(join(directory, "support"));
   const parsed = parseConfig({
     GHIDRA_INSTALL_DIR: directory,
@@ -115,8 +132,10 @@ describe.skipIf(process.platform === "win32")(
         loader: "SnesRomLoader",
         language_id: "65816:LE:24:snes",
         compiler_spec_id: "default",
-        language_selection: "provider-pinned-v1",
         import_mode: "ephemeral-source-immutable",
+        mapping_attestation: "per-bank-file-backed-snesromloader-v1",
+        entry_resolution: "reset-vector-canonical-bank-v1",
+        load_image_evidence: "independent-snes-bank-mapping-v1",
         snes_extension: {
           id: "ghidra-snes",
           root,
@@ -126,7 +145,6 @@ describe.skipIf(process.platform === "win32")(
         snes_cartridge: { ...snesTarget.cartridge },
       });
       expect(profile.parameters).not.toHaveProperty("entry_point");
-      expect(profile.parameters).not.toHaveProperty("load_image_evidence");
     });
 
     it("resolves a deterministic profile identity for unchanged inputs", async () => {
@@ -223,7 +241,26 @@ describe.skipIf(process.platform === "win32")(
       expect(resolved.ok).toBe(false);
     });
 
-    it("does not expose successful analysis execution for snes-rom targets", async () => {
+    it("refuses the execution lane for declared mappings outside lorom/hirom", async () => {
+      const { provider } = await snesInstallation();
+      const resolved = await provider.resolveAnalysisProfile(
+        unsupportedMapperTarget,
+      );
+      if (!resolved.ok) throw resolved.error;
+      const client = provider.createClient(
+        unsupportedMapperTarget,
+        resolved.value.profile ?? undefined,
+      );
+      const executed = await client.execute("read_bytes", {
+        address: "0x808000",
+        length: 1,
+      });
+      expect(executed.ok).toBe(false);
+      if (executed.ok) throw new Error("Unsupported mapper was executed");
+      expect(String(executed.error.diagnostics?.reason)).toContain("sa-1");
+    });
+
+    it("moves the lorom execution lane past the SNES admission gate", async () => {
       const { provider } = await snesInstallation();
       const resolved = await provider.resolveAnalysisProfile(snesTarget);
       if (!resolved.ok) throw resolved.error;
@@ -232,13 +269,15 @@ describe.skipIf(process.platform === "win32")(
         resolved.value.profile ?? undefined,
       );
       const executed = await client.execute("read_bytes", {
-        address: "0x8000",
+        address: "0x808000",
         length: 1,
       });
       expect(executed.ok).toBe(false);
-      if (executed.ok) throw new Error("SNES execution was exposed");
-      expect(String(executed.error.diagnostics?.reason)).toContain(
-        "SnesRomLoader",
+      if (executed.ok) throw new Error("SNES execution ran without Ghidra");
+      // The refusal must now come from the unavailable fake installation,
+      // not from a blanket SNES admission gate.
+      expect(JSON.stringify(executed.error.diagnostics ?? {})).not.toContain(
+        "not admitted yet",
       );
     });
 

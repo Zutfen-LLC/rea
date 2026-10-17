@@ -14,6 +14,7 @@ import {
   attestGhidraDosLoadImage,
   attestGhidraRawBinaryLoadImage,
 } from "./GhidraLoadImageValues.js";
+import { attestGhidraSnesRomLoadImage } from "./GhidraSnesLoadImageValues.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import type { GhidraClient } from "./GhidraClient.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
@@ -69,7 +70,7 @@ export const attestGhidraNativeLoadImage = async (
           nativeLoadImageSchema.parse({
             status: "unsupported",
             reason:
-              "Independent load-image verification currently supports DOS MZ, explicit DOS COM, and caller-supplied raw-binary targets only.",
+              "Independent load-image verification currently supports DOS MZ, explicit DOS COM, caller-supplied raw-binary, and admitted SNES cartridge targets only.",
             observations: {
               ...observations,
               metadata_recovery: [
@@ -99,14 +100,15 @@ export const attestGhidraNativeLoadImage = async (
   if (
     target.format !== "dos-mz" &&
     target.format !== "dos-com" &&
-    target.format !== "raw-binary"
+    target.format !== "raw-binary" &&
+    target.format !== "snes-rom"
   ) {
     return ok(
       jsonValueSchema.parse(
         nativeLoadImageSchema.parse({
           status: "unsupported",
           reason:
-            "Independent load-image verification currently supports DOS MZ, explicit DOS COM, and caller-supplied raw-binary targets only.",
+            "Independent load-image verification currently supports DOS MZ, explicit DOS COM, caller-supplied raw-binary, and admitted SNES cartridge targets only.",
           observations,
           limitations: [
             "Other formats expose measured mappings and source identities; no format-specific verification was performed.",
@@ -114,6 +116,42 @@ export const attestGhidraNativeLoadImage = async (
         }),
       ),
     );
+  }
+  if (target.format === "snes-rom") {
+    if (client.readTargetSnapshot === undefined)
+      return err(
+        new ProviderAdapterError("ghidra", operation, {
+          diagnostics: {
+            reason:
+              "The Ghidra client does not expose its immutable target snapshot for independent SNES load-image verification.",
+          },
+        }),
+      );
+    const snapshot = await client.readTargetSnapshot(undefined, signal);
+    if (!snapshot.ok) return err(mapSessionError(snapshot.error));
+    if (isSignalAborted(signal))
+      return err(new AnalysisCancelledError(operation));
+    if (snapshot.value.kind !== "captured")
+      return err(
+        new ProviderAdapterError("ghidra", operation, {
+          diagnostics: {
+            reason:
+              "The uncapped SNES load-image snapshot was unexpectedly not captured.",
+          },
+        }),
+      );
+    const attested = await attestGhidraSnesRomLoadImage({
+      bytes: snapshot.value.bytes,
+      targetSha256: target.sha256 ?? "",
+      observations,
+    });
+    if (!attested.ok)
+      return err(
+        new ProviderAdapterError("ghidra", operation, {
+          diagnostics: { reason: attested.error },
+        }),
+      );
+    return ok(jsonValueSchema.parse(attested.value));
   }
   if (target.format === "raw-binary") {
     if (client.hashTargetSnapshot === undefined)

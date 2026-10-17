@@ -16,8 +16,8 @@ import {
 // caller-installed ghidra-snes extension (joshleaves/ghidra-snes@d33ce5db,
 // MIT): checksum complement, recognized mapping-mode nibble, declared size
 // bounds, printable title, and whole-image checksum. They prove nothing
-// about SnesRomLoader execution, which stays unadmitted until downstream
-// work wires it.
+// about SnesRomLoader execution, which is qualified separately against the
+// real provider (verify:ghidra:65816).
 
 const readAt = (bytes: Buffer) => async (offset: number, length: number) => {
   if (offset < 0 || length < 0 || offset + length > bytes.length)
@@ -57,6 +57,24 @@ describe("snes-rom cartridge admission", () => {
         headerOffset: snesHeaderBase(SNES_HIROM_TITLE_BASE),
         declaredMapping: "hirom",
       },
+    });
+  });
+
+  it("records the raw mapping-mode byte and its declared speed", async () => {
+    const slow = await admit(snesCartridgeImage({ mapperByte: 0x20 }));
+    expect(slow).toMatchObject({
+      ok: true,
+      value: { mappingModeByte: 0x20, declaredSpeed: "slow" },
+    });
+    const fastHirom = await admit(
+      snesCartridgeImage({
+        headerBases: [SNES_HIROM_TITLE_BASE],
+        mapperByte: 0x31,
+      }),
+    );
+    expect(fastHirom).toMatchObject({
+      ok: true,
+      value: { mappingModeByte: 0x31, declaredSpeed: "fast" },
     });
   });
 
